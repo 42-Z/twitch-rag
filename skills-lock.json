@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "upstash-blob-js": {
+      "source": "upstash/skills",
+      "sourceType": "github",
+      "skillPath": "skills/upstash-blob-js/SKILL.md",
+      "computedHash": "dd0076f291a1d943bdf2d057c08f0545244b57c795da3bdac6c6d39aa077ba38"
+    },
+    "upstash-cli": {
+      "source": "upstash/skills",
+      "sourceType": "github",
+      "skillPath": "skills/upstash-cli/SKILL.md",
+      "computedHash": "13face5a166a3340b37dda75a9f30c54c1779813f2dad6566d2b44317e465ae1"
+    },
+    "upstash-vector-js": {
+      "source": "upstash/skills",
+      "sourceType": "github",
+      "skillPath": "skills/upstash-vector-js/SKILL.md",
+      "computedHash": "6766c88b6161a3518e02633acae98da7b3a7fb8a731a248d0805886e035542bd"
+    }
+  }
+}
