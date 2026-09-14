@@ -39,3 +39,4 @@ tmp
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+.box
