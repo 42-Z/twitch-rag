@@ -186,10 +186,23 @@ AAC вдвое быстрее кодируется, входит в список
 
 ### Решение: `openai/whisper-large-v3-turbo` через OpenRouter, `verbose_json` с посегментными метками
 
-```
-POST https://openrouter.ai/api/v1/audio/transcriptions
-  file=<кусок>, model=openai/whisper-large-v3-turbo,
-  response_format=verbose_json, timestamp_granularities[]=segment, language=ru
+Обращения выполняются официальным SDK OpenAI с базовым адресом OpenRouter — интерфейс
+совместим, отдельного клиента писать не нужно. Это относится ко всем трём видам вызовов:
+распознаванию, составлению документа и эмбеддингам.
+
+```ts
+const client = new OpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: env.OPENROUTER_API_KEY,
+});
+
+await client.audio.transcriptions.create({
+  file: chunk,
+  model: "openai/whisper-large-v3-turbo",
+  response_format: "verbose_json",
+  timestamp_granularities: ["segment"],
+  language: "ru",
+});
 ```
 
 Проверено на живом запросе: 73 сегмента на 10 минут речи, поля `start`, `end`, `text`,
