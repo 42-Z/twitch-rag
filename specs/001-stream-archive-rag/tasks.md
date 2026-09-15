@@ -96,7 +96,7 @@ Cloudflare.
 - [X] T032 [P] [US1] Реализовать `src/pipeline/segment.ts`: конвейер `yt-dlp -f bestaudio` → `ffmpeg -c:a aac -b:a 32k -ac 1 -ar 16000 -f segment -segment_time 600 -segment_list index.csv -segment_list_type csv`, перекрытие 5 секунд между кусками, чтение `index.csv` в список `{index, key, offsetSeconds, durationSeconds}`
 - [X] T033 [US1] Реализовать `src/pipeline/publish.ts`: выгрузка кусков в R2 по пути `audio/<vodId>/chunk-<NNNN>.m4a` и `audio/<vodId>/index.csv` через S3-совместимый доступ, затем вызов `POST /api/internal/ingest-ready` с секретом `X-Ingest-Secret`; все обращения с повторами (API бокса нестабилен — 2 отказа из 7 в замерах)
 - [X] T034 [US1] Реализовать `src/pipeline/main.ts`: точка входа прогона — принять `vodId` и адрес Worker, пройти media → segment → publish, при недоступности записи отправить вызов отказа `{ failed: true, code, message }`, при любом исходе убрать за собой временные файлы
-- [ ] T035 [US1] Собрать `pipeline/` в один файл и залить в бокс `fun-goshawk-88276`, обновить снимок; задокументировать шаг в plan.md, раздел И4 (скилл `upstash:upstash-box-cli`)
+- [X] T035 [US1] Собрать `pipeline/` в один файл и залить в бокс `fun-goshawk-88276`, обновить снимок; задокументировать шаг в plan.md, раздел И4 (скилл `upstash:upstash-box-cli`)
 
 ### Обработка в Worker
 
