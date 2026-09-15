@@ -39,12 +39,17 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     try {
       await this.process(params, step, services);
     } catch (error) {
-      // Шаги переигрываются сами; сюда попадает только исчерпанная попытка.
-      // Запись не должна остаться в processing навсегда — её нужно взять
-      // заново на следующем опросе (schedule.ts проверяет attempts).
+      // Шаги переигрываются сами; сюда попадает только исчерпанная попытка
+      // шага — либо сброс движка (например, Durable Object перезапущен
+      // деплоем), после которого `run()` может быть вызван заново и
+      // продолжить с уже пройденных шагов. В обоих случаях куски, ещё не
+      // распознанные, должны остаться в хранилище: их уборка отсюда убила бы
+      // именно тот повтор, ради которого шаги и разбиты по кускам. Забытые
+      // куски подчищает почасовая уборка по возрасту (`cleanupStaleAudio` в
+      // index.ts) — запись не должна остаться в processing навсегда, её
+      // возьмут заново на следующем опросе (schedule.ts проверяет attempts).
       const message = error instanceof Error ? error.message : String(error);
       await services.registry.patchStream(params.vodId, { status: "failed", reason: message });
-      await this.cleanupAudio(params.vodId).catch(() => undefined);
       throw error;
     }
   }
