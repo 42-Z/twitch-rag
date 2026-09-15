@@ -17,6 +17,7 @@ import { planDocumentParts, assignCategories, uniqueCategories } from "../shared
 import {
   parseDocument,
   normalizeSections,
+  unreadableHeadings,
   chunkSection,
   buildContextLine,
   type ParsedSection,
@@ -39,17 +40,16 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     try {
       await this.process(params, step, services);
     } catch (error) {
-      // Шаги переигрываются сами; сюда попадает только исчерпанная попытка
-      // шага — либо сброс движка (например, Durable Object перезапущен
-      // деплоем), после которого `run()` может быть вызван заново и
-      // продолжить с уже пройденных шагов. В обоих случаях куски, ещё не
-      // распознанные, должны остаться в хранилище: их уборка отсюда убила бы
-      // именно тот повтор, ради которого шаги и разбиты по кускам. Забытые
-      // куски подчищает почасовая уборка по возрасту (`cleanupStaleAudio` в
-      // index.ts) — запись не должна остаться в processing навсегда, её
-      // возьмут заново на следующем опросе (schedule.ts проверяет attempts).
+      // Куски, ещё не распознанные, остаются в хранилище при любом исходе:
+      // уборка отсюда убила бы именно ту переигровку, ради которой шаги и
+      // разбиты по кускам. Забытое подчищает почасовая уборка по возрасту
+      // (`cleanupStaleAudio` в index.ts).
       const message = error instanceof Error ? error.message : String(error);
-      await services.registry.patchStream(params.vodId, { status: "failed", reason: message });
+      if (!isEngineReset(message)) {
+        // Запись не должна остаться в processing навсегда — её возьмут заново
+        // на следующем опросе (schedule.ts проверяет attempts).
+        await services.registry.patchStream(params.vodId, { status: "failed", reason: message });
+      }
       throw error;
     }
   }
@@ -128,7 +128,14 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
 
     // --- разделы ---
     const sections = await step.do("разобрать документ на разделы", async () => {
-      const parsed = parseDocument(written.join("\n\n"));
+      const document = written.join("\n\n");
+      // Заголовок, который не удалось прочитать, уносит с собой весь свой
+      // раздел. Молча это терять нельзя: так однажды пропали два часа эфира.
+      const unreadable = unreadableHeadings(document);
+      if (unreadable.length > 0) {
+        console.warn(`нечитаемые заголовки по ${params.vodId}: ${JSON.stringify(unreadable.slice(0, 5))}`);
+      }
+      const parsed = parseDocument(document);
       const normalized = normalizeSections(parsed);
       const withCategories = assignCategories(normalized, params.categories);
       if (withCategories.length === 0) {
@@ -191,9 +198,9 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
         speechSeconds: Math.round(speechSeconds),
         docPath: Documents.path(params.vodId),
         processedAt: nowUnix(),
-        ...(gaps.length > 0
-          ? { reason: `Разделы не покрывают ${gaps.length} участк(ов) эфира.` }
-          : {}),
+        // В пометке именно длительность: «один участок» может означать и
+        // минуту тишины, и четыре часа потерянного эфира.
+        ...(gaps.length > 0 ? { reason: `Разделы не покрывают ${formatGaps(gaps)} эфира.` } : {}),
       });
     });
 
@@ -223,6 +230,28 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+/** «2 ч 14 мин в 3 участках» — столько эфира не попало ни в один раздел. */
+export function formatGaps(gaps: ReadonlyArray<{ from: number; to: number }>): string {
+  const seconds = gaps.reduce((sum, gap) => sum + (gap.to - gap.from), 0);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.round((seconds % 3600) / 60);
+  const duration = hours > 0 ? `${hours} ч ${minutes} мин` : `${minutes} мин`;
+  return gaps.length === 1 ? duration : `${duration} в ${gaps.length} участках`;
+}
+
+/**
+ * Сбой самого движка, а не разбора: движок переигрывает `run()` с уже
+ * пройденных шагов, и работа продолжается. Помечать такую запись отказом
+ * нельзя — наблюдалось на живых прогонах, где после «Durable Object reset»
+ * разбор доходил до конца, а в реестре всё это время значился отказ.
+ *
+ * Разбор вправду умрёт, только когда движок исчерпает свои попытки; тогда
+ * последней придёт уже не эта ошибка, и запись будет помечена как надо.
+ */
+function isEngineReset(message: string): boolean {
+  return /Durable Object reset|WorkflowInternalError|internal workflows error/i.test(message);
 }
 
 function formatRange(section: ParsedSection): string {

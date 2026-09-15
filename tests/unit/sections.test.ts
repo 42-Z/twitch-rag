@@ -6,6 +6,7 @@ import {
   buildContextLine,
   renderSection,
   MAX_SECTION_CHARS,
+  unreadableHeadings,
   type ParsedSection,
 } from "../../src/shared/sections.ts";
 
@@ -144,5 +145,42 @@ describe("нарезка раздела на куски", () => {
   test("номера кусков идут подряд с нуля", () => {
     const chunks = chunkSection(sectionOf("Текст. ".repeat(500)), context);
     expect(chunks.map((chunk) => chunk.chunkIndex)).toEqual(chunks.map((_, index) => index));
+  });
+});
+
+describe("вольности модели в заголовке", () => {
+  // Настоящий вывод с живого прогона: минуты с секундами через край вместо
+  // Ч:ММ:СС. Строгий разбор терял вместе с такими заголовками часы эфира.
+  const loose = `## Открытие эфира [0:00 — 0:165 · Just Chatting]
+
+Эфир начинается с заставки.
+
+## Технические неполадки [0:165 — 0:389 · Just Chatting]
+
+Стример разбирается с донатами.`;
+
+  test("секунды через край читаются как секунды", () => {
+    const sections = parseDocument(loose);
+    expect(sections.length).toBe(2);
+    expect(sections[0]?.startSeconds).toBe(0);
+    expect(sections[0]?.endSeconds).toBe(165);
+    expect(sections[1]?.startSeconds).toBe(165);
+    expect(sections[1]?.endSeconds).toBe(389);
+  });
+
+  test("привычный Ч:ММ:СС читается по-прежнему", () => {
+    const sections = parseDocument("## Спор о правилах [1:07:20 — 1:19:05 · Minecraft]\n\nТекст раздела.");
+    expect(sections[0]?.startSeconds).toBe(4040);
+    expect(sections[0]?.endSeconds).toBe(4745);
+    expect(sections[0]?.category).toBe("Minecraft");
+  });
+
+  test("заголовок без времени попадает в список нечитаемых", () => {
+    const broken = "## Раздел без времени\n\nТекст.\n\n## Нормальный [0:00 — 1:00]\n\nТекст.";
+    expect(unreadableHeadings(broken)).toEqual(["## Раздел без времени"]);
+  });
+
+  test("у читаемого документа нечитаемых заголовков нет", () => {
+    expect(unreadableHeadings(loose)).toEqual([]);
   });
 });
