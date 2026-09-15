@@ -50,7 +50,7 @@ Cloudflare.
 
 ### Внешние ресурсы (раздел И2 плана)
 
-- [ ] T010 [P] Создать базу реестра: `upstash redis create --name twitch-rag --region eu-west-1`; получить полный и read-only токены (скилл `upstash:upstash-cli`)
+- [X] T010 [P] Создать базу реестра: `upstash redis create --name twitch-rag --region eu-west-1`; получить полный и read-only токены (скилл `upstash:upstash-cli`)
 - [X] T011 [P] Создать бакет документов: `upstash blob create --name twitch-docs --visibility private`
 - [ ] T012 [P] Создать бакет аудио: `wrangler r2 bucket create twitch-audio`
 - [ ] T013 Создать в панели R2 токен доступа к API S3 (чтение и запись в `twitch-audio`) — бокс выгружает куски снаружи Cloudflare и привязкой пользоваться не может; ключ и секрет идут в переменные бокса
@@ -110,13 +110,13 @@ Cloudflare.
 
 ### Выдача знаний
 
-- [ ] T043 [US1] Реализовать `src/worker/routes/knowledge.ts` — `POST /api/knowledge/search`: валидация `query` (1–1000 знаков после обрезки пробелов), `topK` (1–20, по умолчанию 5), `minScore` (0..1, по умолчанию 0.35), `from`/`to` (`YYYY-MM-DD`), `category`; эмбеддинг запроса, поиск, схлопывание дубликатов по разделу с лучшей оценкой, возврат `sectionText` целиком (FR-022), сортировка по убыванию `score`
-- [ ] T044 [US1] Реализовать в `src/worker/routes/knowledge.ts` ответ при отсутствии знаний: 200, `{ found: false, documents: [], message: "В базе знаний нет сведений по этому вопросу." }` — не ошибка (FR-024)
-- [ ] T045 [US1] Реализовать `GET /api/knowledge/stats` в `src/worker/routes/knowledge.ts`: канал, число разобранных и пропущенных записей, число разделов, покрытие по датам, список категорий, `lastIndexedAt`
-- [ ] T046 [US1] Реализовать `src/worker/mcp.ts`: `createMcpHandler` из `agents/mcp/server`, stateless Streamable HTTP на `/mcp`, без авторизации (FR-027); имя сервера `twitch-knowledge`, версия из манифеста проекта
-- [ ] T047 [US1] Добавить в `src/worker/mcp.ts` инструмент `search_knowledge` с параметрами `query`, `topK` (1–20, по умолчанию 5), `from`/`to`, `category`; описание для модели и формат блока результата — по contracts/mcp-server.md; `structuredContent` совпадает с ответом HTTP API
-- [ ] T048 [P] [US1] Добавить в `src/worker/mcp.ts` инструменты `knowledge_stats` (без параметров) и `list_streams` (`from`/`to`, `limit` 1–50, по умолчанию 20, данные из реестра без векторного поиска); оба только читают
-- [ ] T049 [P] [US1] Контрактный тест `tests/contract/knowledge-search.test.ts`: формы запроса и ответа, пустой результат как 200, отклонение `query` длиной 10 000 знаков кодом `invalid_input`, соблюдение `topK` и фильтров
+- [X] T043 [US1] Реализовать `src/worker/routes/knowledge.ts` — `POST /api/knowledge/search`: валидация `query` (1–1000 знаков после обрезки пробелов), `topK` (1–20, по умолчанию 5), `minScore` (0..1, по умолчанию 0.35), `from`/`to` (`YYYY-MM-DD`), `category`; эмбеддинг запроса, поиск, схлопывание дубликатов по разделу с лучшей оценкой, возврат `sectionText` целиком (FR-022), сортировка по убыванию `score`
+- [X] T044 [US1] Реализовать в `src/worker/routes/knowledge.ts` ответ при отсутствии знаний: 200, `{ found: false, documents: [], message: "В базе знаний нет сведений по этому вопросу." }` — не ошибка (FR-024)
+- [X] T045 [US1] Реализовать `GET /api/knowledge/stats` в `src/worker/routes/knowledge.ts`: канал, число разобранных и пропущенных записей, число разделов, покрытие по датам, список категорий, `lastIndexedAt`
+- [X] T046 [US1] Реализовать `src/worker/mcp.ts`: `createMcpHandler` из `agents/mcp/server`, stateless Streamable HTTP на `/mcp`, без авторизации (FR-027); имя сервера `twitch-knowledge`, версия из манифеста проекта
+- [X] T047 [US1] Добавить в `src/worker/mcp.ts` инструмент `search_knowledge` с параметрами `query`, `topK` (1–20, по умолчанию 5), `from`/`to`, `category`; описание для модели и формат блока результата — по contracts/mcp-server.md; `structuredContent` совпадает с ответом HTTP API
+- [X] T048 [P] [US1] Добавить в `src/worker/mcp.ts` инструменты `knowledge_stats` (без параметров) и `list_streams` (`from`/`to`, `limit` 1–50, по умолчанию 20, данные из реестра без векторного поиска); оба только читают
+- [X] T049 [P] [US1] Контрактный тест `tests/contract/knowledge-search.test.ts`: формы запроса и ответа, пустой результат как 200, отклонение `query` длиной 10 000 знаков кодом `invalid_input`, соблюдение `topK` и фильтров
 - [ ] T050 [P] [US1] Интеграционный тест `tests/integration/pipeline.test.ts` на двухминутном фрагменте записи: путь от кусков аудио до раздела, находимого поиском; проверка, что расшифровка нигде не сохранена и R2 пуст после разбора
 
 **Контрольная точка**: MVP готов — одна запись разобрана, ассистент подключается по `/mcp` и получает знания.

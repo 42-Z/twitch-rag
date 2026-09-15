@@ -7,9 +7,12 @@
  */
 
 import { errorResponse, AppError } from "../shared/errors.ts";
-import { rateLimitHeaders } from "./ratelimit.ts";
+import { enforceRateLimit, rateLimitHeaders } from "./ratelimit.ts";
 import type { Env } from "./env.ts";
+import { createServices } from "./env.ts";
 import { handleHealth } from "./routes/health.ts";
+import { handleMcp } from "./mcp.ts";
+import { knowledgeStats, parseSearchRequest, searchKnowledge } from "./routes/knowledge.ts";
 
 type Handler = (request: Request, env: Env, params: Record<string, string>) => Promise<Response>;
 
@@ -26,11 +29,51 @@ interface Route {
  */
 const ROUTES: Route[] = [
   { method: "GET", pattern: "/api/health", handler: (_request, env) => handleHealth(env) },
+
+  {
+    method: "POST",
+    pattern: "/api/knowledge/search",
+    handler: async (request, env) => {
+      await enforceRateLimit(request, env, "search");
+      const body = await readJson(request);
+      const parsed = parseSearchRequest(body);
+      const result = await searchKnowledge(parsed, createServices(env));
+      return Response.json(result);
+    },
+  },
+
+  {
+    method: "GET",
+    pattern: "/api/knowledge/stats",
+    handler: async (request, env) => {
+      await enforceRateLimit(request, env, "stats");
+      return Response.json(await knowledgeStats(createServices(env)));
+    },
+  },
 ];
 
+async function readJson(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    throw new AppError("invalid_input", "Тело запроса должно быть объектом JSON.");
+  }
+}
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // MCP обслуживает собственный обработчик: у него свой разбор протокола,
+    // свои коды ошибок и свои заголовки.
+    if (url.pathname === "/mcp") {
+      try {
+        await enforceRateLimit(request, env, "mcp");
+      } catch (error) {
+        return withCors(errorResponse(error, rateLimitHeaders(error)));
+      }
+      return await handleMcp(request, env, ctx);
+    }
 
     if (request.method === "OPTIONS") return preflightResponse();
 
