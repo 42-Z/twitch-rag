@@ -54,6 +54,9 @@ async function main(): Promise<void> {
   });
 
   const workDir = path.join("/workspace/home/work", args.vodId);
+  // Имя этому прогону: по нему Worker отличит повторный сигнал одного прогона
+  // от нового разбора той же записи (`publish.ts`).
+  const runId = crypto.randomUUID();
 
   try {
     const info = await readMediaInfo(args.url);
@@ -63,6 +66,7 @@ async function main(): Promise<void> {
     await publisher.uploadChunks(args.vodId, workDir, chunks);
     await publisher.notifyReady(args.callbackUrl, secret, {
       vodId: args.vodId,
+      runId,
       title: info.title,
       publishedAt: info.publishedAt,
       durationSeconds: info.durationSeconds,

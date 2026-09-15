@@ -4,11 +4,12 @@ import { AppError } from "../../src/shared/errors.ts";
 import type { Env, Services } from "../../src/worker/env.ts";
 
 /**
- * Инстанс Workflow называется по vodId, и `create` с занятым id бросает
- * ошибку — эта заглушка воспроизводит ровно такое поведение, чтобы поймать
- * регресс: запись реестра уже стоит в processing к моменту этого сигнала
- * (её поставил startStreamIngest раньше), поэтому дедупликация не может
- * опираться на статус реестра — только на сам Workflow.
+ * Инстанс Workflow называется по записи и прогону, и `create` с занятым
+ * именем бросает ошибку — эта заглушка воспроизводит ровно такое поведение,
+ * чтобы поймать два регресса: дедупликация не может опираться на статус
+ * реестра (он стоит в processing уже к моменту сигнала, его поставил
+ * startStreamIngest), а новый прогон той же записи не должен упираться в имя
+ * прошлого — оно занято навсегда.
  */
 function fakeEnv(options: { existingInstanceIds?: Set<string>; failCreate?: Error } = {}): Env {
   const created = options.existingInstanceIds ?? new Set<string>();
@@ -38,6 +39,7 @@ function fakeServices(): Services {
 function body(overrides: Record<string, unknown> = {}) {
   return {
     vodId: "2873255697",
+    runId: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
     title: "Тест",
     publishedAt: "2026-09-13T16:32:54Z",
     durationSeconds: 19019,
@@ -74,7 +76,7 @@ describe("POST /api/internal/ingest-ready", () => {
     expect(response.status).toBe(202);
     const data = (await response.json()) as { status: string; instanceId?: string };
     expect(data.status).toBe("processing");
-    expect(data.instanceId).toBe("ingest-2873255697");
+    expect(data.instanceId).toBe("ingest-2873255697-3f2504e0-4f89-11d3-9a0c-0305e82c3301");
   });
 
   test("повторный сигнал той же записи не создаёт второй инстанс", async () => {
@@ -95,6 +97,35 @@ describe("POST /api/internal/ingest-ready", () => {
       throw new Error("ожидалась ошибка upstream_unavailable");
     } catch (error) {
       expect((error as AppError).code).toBe("upstream_unavailable");
+    }
+  });
+
+  test("новый прогон той же записи получает собственный инстанс", async () => {
+    // Имя инстанса занято навсегда: без имени прогона повторный разбор
+    // упирался бы в прошлый и молча не начинался.
+    const env = fakeEnv();
+    const services = fakeServices();
+    const first = await handleIngestReady(request(body()), env, services);
+    const second = await handleIngestReady(
+      request(body({ runId: "8c0a1f22-1111-4c33-9d44-55667788aabb" })),
+      env,
+      services,
+    );
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    const data = (await second.json()) as { instanceId?: string };
+    expect(data.instanceId).toBe("ingest-2873255697-8c0a1f22-1111-4c33-9d44-55667788aabb");
+  });
+
+  test("сигнал без имени прогона отвергается", async () => {
+    const payload = body();
+    delete (payload as Record<string, unknown>).runId;
+    try {
+      await handleIngestReady(request(payload), fakeEnv(), fakeServices());
+      throw new Error("ожидалась ошибка invalid_input");
+    } catch (error) {
+      expect((error as AppError).code).toBe("invalid_input");
     }
   });
 

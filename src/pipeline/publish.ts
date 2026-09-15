@@ -21,6 +21,14 @@ export interface R2Config {
 
 export interface IngestPayload {
   vodId: string;
+  /**
+   * Идентификатор этого прогона. По нему Worker называет инстанс разбора:
+   * повторный сигнал того же прогона (бокс шлёт его снова после обрыва сети)
+   * попадает в занятое имя и второго разбора не создаёт, а новый прогон той
+   * же записи получает собственное имя и не упирается в прошлый — имя
+   * инстанса занято навсегда, метода удаления в API Workers нет.
+   */
+  runId: string;
   title: string;
   publishedAt: string;
   durationSeconds: number;

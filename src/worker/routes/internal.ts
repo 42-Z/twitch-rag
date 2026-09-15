@@ -11,6 +11,8 @@ import type { Env, IngestParams, Services } from "../env.ts";
 
 export interface IngestReadyBody {
   vodId: string;
+  /** Имя прогона бокса: из него складывается имя инстанса разбора. */
+  runId: string;
   title: string;
   publishedAt: string;
   durationSeconds: number;
@@ -37,15 +39,28 @@ function isFailure(body: unknown): body is IngestFailedBody {
 }
 
 /**
- * Инстанс Workflow называется по vodId: `create` с занятым id бросает
- * ошибку, и это ровно нужный признак повтора. Реестр для дедупликации не
- * годится — запись уже стоит в `processing` с того момента, как разбор
+ * Инстанс Workflow называется по записи и прогону: `create` с занятым именем
+ * бросает ошибку, и это ровно нужный признак повтора. Реестр для дедупликации
+ * не годится — запись уже стоит в `processing` с того момента, как разбор
  * запущен (`startStreamIngest`), то есть ко времени этого сигнала она
  * `processing` всегда, и по одному этому нельзя отличить первый вызов от
  * повторного.
+ *
+ * Имя прогона обязательно: по одному только vodId повторный разбор записи
+ * упирался бы в имя прошлого — оно занято навсегда, метода удаления инстанса
+ * в API Workers нет. Из-за этого не работали ни повтор после сбоя, ни
+ * повторный разбор вручную: сигнал приходил, а разбор молча не начинался.
  */
-function workflowInstanceId(vodId: string): string {
-  return `ingest-${vodId}`;
+function workflowInstanceId(vodId: string, runId: string): string {
+  return `ingest-${vodId}-${runId}`;
+}
+
+/** Имя прогона идёт в идентификатор инстанса, поэтому форма проверяется. */
+function requireRunId(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9-]{8,64}$/.test(value)) {
+    throw new AppError("invalid_input", "В сигнале прогона нет опознаваемого runId.");
+  }
+  return value;
 }
 
 /**
@@ -72,6 +87,7 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
   if (payload.vodId === undefined || payload.vodId === "") {
     throw new AppError("invalid_input", "В сигнале прогона нет vodId.");
   }
+  const runId = requireRunId(payload.runId);
 
   const existing = await services.registry.getStream(payload.vodId);
 
@@ -100,7 +116,7 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
   };
 
   try {
-    const instance = await env.INGEST.create({ id: workflowInstanceId(payload.vodId), params });
+    const instance = await env.INGEST.create({ id: workflowInstanceId(payload.vodId, runId), params });
     return Response.json({ vodId: payload.vodId, status: "processing", instanceId: instance.id }, { status: 202 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
