@@ -15,8 +15,19 @@ export interface BoxConfig {
   apiKey: string;
 }
 
-/** Путь к собранному прогону внутри бокса. */
-export const PIPELINE_PATH = "/workspace/home/pipeline.js";
+/**
+ * Путь к собранному прогону внутри бокса. Расширение `.mjs`, а не `.js` —
+ * сборка использует верхнеуровневый `await`, и без него Node решал бы модуль
+ * как CommonJS в зависимости от `package.json` рабочего каталога бокса.
+ */
+export const PIPELINE_PATH = "/workspace/home/pipeline.mjs";
+/**
+ * Секреты прогона (`INGEST_SECRET`, ключи R2) — файлом, а не в командной
+ * строке: `box env set` держит только переменные, заданные при создании
+ * бокса, а прогон бокса уже существует. Команда `ps` внутри бокса иначе
+ * показала бы секрет любому, кто туда заглянет.
+ */
+export const PIPELINE_ENV_PATH = "/workspace/home/.env.pipeline";
 
 export class BoxRunner {
   constructor(private readonly config: BoxConfig) {}
@@ -32,7 +43,7 @@ export class BoxRunner {
     const callbackUrl = requireHttpsUrl(input.callbackUrl, "адрес обратного вызова");
 
     const command =
-      `( node ${PIPELINE_PATH}` +
+      `( node --env-file=${PIPELINE_ENV_PATH} ${PIPELINE_PATH}` +
       ` --vod '${vodId}'` +
       ` --url '${url}'` +
       ` --callback '${callbackUrl}'` +

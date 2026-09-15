@@ -206,6 +206,44 @@ build.ts                        # сборка интерфейса в dist (у�
 в один файл и заливается в бокс, снимок обновляется. Автоматическая публикация из GitHub
 через Workers Builds — после того, как ручной путь заработает.
 
+**Заливка прогона в бокс — команды**:
+
+```bash
+bun build src/pipeline/main.ts --target=node --outfile=pipeline.mjs
+```
+
+Расширение `.mjs`, а не `.js`: сборка использует верхнеуровневый `await`, и без него Node
+решал бы модуль как CommonJS в зависимости от `package.json` рабочего каталога бокса.
+`aws4fetch` встраивается в бандл целиком — в боксе не нужно ничего устанавливать сверх
+`yt-dlp` и `ffmpeg`.
+
+```bash
+box --box fun-goshawk-88276 files write /workspace/home/pipeline.mjs - < pipeline.mjs
+box --box fun-goshawk-88276 files write /workspace/home/.env.pipeline - <<'EOF'
+INGEST_SECRET=<значение>
+R2_ACCOUNT_ID=<значение>
+R2_BUCKET=twitch-audio
+R2_ACCESS_KEY_ID=<значение>
+R2_SECRET_ACCESS_KEY=<значение>
+EOF
+box --box fun-goshawk-88276 snapshot
+```
+
+Секреты идут файлом, а не аргументом команды запуска: `box exec` подставляет строку
+команды буквально, и она видна через `ps` внутри бокса. Прогон запускается с
+`node --env-file=/workspace/home/.env.pipeline pipeline.mjs …` (`shared/box.ts`).
+
+**Проверено** (2026-09-15, на боксе `fun-goshawk-88276`): `yt-dlp` из репозитория apt
+оказался версии 2023.03.04 и не разбирал текущую страницу Twitch; заменён на актуальный
+бинарник с `github.com/yt-dlp/yt-dlp/releases/latest`. На реальной записи (`2872271642`)
+`--dump-json` вернул корректные главы (`Minecraft` → `Just Chatting`), формат которых
+совпадает с ожиданиями `pipeline/media.ts`. Конвейер `yt-dlp -f bestaudio | ffmpeg` на
+двухминутном фрагменте той же записи дал ровно один кусок и строку `index.csv` вида
+`chunk_0000.m4a,0.000000,120.064000` — формат совпадает с `pipeline/segment.ts`.
+Собранный `pipeline.mjs` залит и запускается (ошибка на отсутствующих аргументах —
+ожидаемая). Снимок пока не обновлён: `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`
+не созданы (T013, панель Cloudflare) — сквозной прогон до R2 не проверить.
+
 ### И5. Первый запуск
 
 Заполнить `.env` → создать недостающие ресурсы (И2) → `wrangler deploy` → открыть
