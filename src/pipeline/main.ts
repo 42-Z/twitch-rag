@@ -64,7 +64,7 @@ async function main(): Promise<void> {
     await publisher.notifyReady(args.callbackUrl, secret, {
       vodId: args.vodId,
       title: info.title,
-      publishedAt: new Date().toISOString(),
+      publishedAt: info.publishedAt,
       durationSeconds: info.durationSeconds,
       categories: info.chapters,
       chunks: chunks.map((chunk) => ({

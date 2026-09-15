@@ -17,6 +17,8 @@ export interface Chapter {
 export interface MediaInfo {
   title: string;
   durationSeconds: number;
+  /** Когда эфир прошёл, а не когда его разбирают. */
+  publishedAt: string;
   /** Категории с временными границами — они же главы записи. */
   chapters: Chapter[];
 }
@@ -39,6 +41,8 @@ export async function readMediaInfo(url: string): Promise<MediaInfo> {
   const raw = JSON.parse(stdout) as {
     title?: string;
     duration?: number;
+    timestamp?: number;
+    upload_date?: string;
     chapters?: Array<{ title?: string; start_time?: number; end_time?: number }> | null;
   };
 
@@ -54,9 +58,27 @@ export async function readMediaInfo(url: string): Promise<MediaInfo> {
   return {
     title: (raw.title ?? "").trim(),
     durationSeconds: duration,
+    publishedAt: publishedAtOf(raw),
     // Эфир без смен категории глав не имеет — тогда категория одна на всю запись.
     chapters: chapters.length > 0 ? chapters : [{ title: "", startSeconds: 0, endSeconds: duration }],
   };
+}
+
+/**
+ * Дата эфира берётся из метаданных записи, а не из часов бокса: по ней
+ * знания фильтруются по свежести, и подстановка времени разбора делает
+ * годовалый эфир сегодняшним.
+ */
+export function publishedAtOf(raw: { timestamp?: number; upload_date?: string }): string {
+  if (typeof raw.timestamp === "number" && Number.isFinite(raw.timestamp)) {
+    return new Date(raw.timestamp * 1000).toISOString();
+  }
+  // Запасной вариант без времени суток: `upload_date` — это YYYYMMDD.
+  const date = raw.upload_date ?? "";
+  if (/^\d{8}$/.test(date)) {
+    return new Date(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T00:00:00Z`).toISOString();
+  }
+  throw new Error("yt-dlp не сообщил дату эфира");
 }
 
 /**

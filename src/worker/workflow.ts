@@ -148,6 +148,13 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // --- индексация ---
     const chunksToIndex = buildChunks(sections, params, language);
 
+    // Повторный разбор делит эфир на разделы заново, и куски прошлого разбора
+    // не обязательно перезаписываются: их номера могут не совпасть. Без этой
+    // уборки в выдачу попадала бы смесь двух разборов одной записи.
+    await step.do("убрать разделы прошлого разбора", async () => {
+      return await services.knowledge.removeStream(params.vodId);
+    });
+
     for (let offset = 0; offset < chunksToIndex.length; offset += EMBED_BATCH) {
       const batch = chunksToIndex.slice(offset, offset + EMBED_BATCH);
       await step.do(`проиндексировать куски ${offset + 1}–${offset + batch.length}`, async () => {
