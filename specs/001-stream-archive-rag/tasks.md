@@ -51,7 +51,7 @@ Cloudflare.
 ### Внешние ресурсы (раздел И2 плана)
 
 - [ ] T010 [P] Создать базу реестра: `upstash redis create --name twitch-rag --region eu-west-1`; получить полный и read-only токены (скилл `upstash:upstash-cli`)
-- [ ] T011 [P] Создать бакет документов: `upstash blob create --name twitch-docs --visibility private`
+- [X] T011 [P] Создать бакет документов: `upstash blob create --name twitch-docs --visibility private`
 - [ ] T012 [P] Создать бакет аудио: `wrangler r2 bucket create twitch-audio`
 - [ ] T013 Создать в панели R2 токен доступа к API S3 (чтение и запись в `twitch-audio`) — бокс выгружает куски снаружи Cloudflare и привязкой пользоваться не может; ключ и секрет идут в переменные бокса
 - [ ] T014 [P] Зарегистрировать приложение на console.twitch.tv, получить `TWITCH_CLIENT_ID` и `TWITCH_CLIENT_SECRET`
@@ -59,21 +59,21 @@ Cloudflare.
 
 ### Общий слой
 
-- [ ] T016 [P] Описать привязки и секреты Worker как типы в `src/worker/env.ts`: бакет R2, Workflow, все секреты из T015 — без `any`
-- [ ] T017 [P] Реализовать `src/shared/errors.ts`: коды `invalid_input`, `not_found`, `vod_unavailable`, `channel_not_set`, `already_processed`, `upstream_unavailable`, `rate_limited`, `internal`; формат ответа `{ error: { code, message, hint } }` с человеческим текстом на русском (контракт knowledge-api.md, принцип III)
-- [ ] T018 [P] Реализовать `src/shared/time.ts`: разбор длительности Twitch (`7h12m35s`), перевод секунд в ссылку `?t=1h2m3s`, прибавление смещения куска к меткам сегментов
-- [ ] T019 [P] Реализовать `src/shared/twitch.ts`: получение app-токена с кэшем в ключе `twitch:token` (TTL из ответа за вычетом запаса), `Get Videos` с `type=archive`, чтение `muted_segments`, определение записи «только для подписчиков»
-- [ ] T020 [P] Реализовать `src/shared/openrouter.ts`: клиент официального SDK OpenAI с `baseURL: "https://openrouter.ai/api/v1"`; три функции — распознавание (`openai/whisper-large-v3-turbo`, `response_format: "verbose_json"`, `timestamp_granularities: ["segment"]`), составление документа (`inclusionai/ling-3.0-flash`), эмбеддинги (`openai/text-embedding-3-small`, 1536 измерений). Ключ не попадает в браузер
-- [ ] T021 Реализовать `src/shared/registry.ts` по разделу 1 data-model.md: hash `channel` (`twitchUserId`, `login`, `displayName`, `watchFrom`, `addedAt`, `lastCheckedAt`, `lastCheckError`), hash `stream:<vodId>` со всеми полями и состояниями `processing | ready | skipped | failed`, sorted set `streams:index` (вес — `publishedAtUnix`). Инвариант: `stream:*` и `streams:index` меняются одной транзакцией
-- [ ] T022 [P] Реализовать `src/shared/documents.ts`: запись и чтение `streams/<vodId>.md` в приватном бакете Upstash Blob; документ пишется один раз целиком
-- [ ] T023 [P] Реализовать `src/shared/knowledge.ts`: запись кусков в Upstash Vector с идентификатором `<vodId>:<sectionIndex>:<chunkIndex>`, метаданными из раздела 3 data-model.md (включая `sectionText` — текст раздела целиком), поиск с фильтрами по `publishedAtUnix` и `category`, удаление по префиксу `<vodId>:`
-- [ ] T024 [P] Реализовать `src/shared/sections.ts`: разбор размеченного текста документа на разделы по строке заголовка вида `## Тема [1:12:30 — 1:18:40 · Категория]`; нарезка раздела на куски 1500–3000 знаков с перекрытием 200 знаков, раздел короче — целиком; ограничение раздела 6000 знаков (лимит метаданных 48 КБ); контекстная строка в начале куска — дата эфира, категория, тема раздела
-- [ ] T025 [P] Реализовать `src/shared/categories.ts`: сопоставление раздела с главой записи по времени начала — каждый раздел получает категорию, действовавшую в его момент (FR-014)
-- [ ] T026 Реализовать `src/worker/index.ts`: обработчики `fetch` и `scheduled`, маршрутизация по путям контракта, отдача статики раньше логики Worker, единый формат ошибок из `errors.ts`
-- [ ] T027 Реализовать `src/worker/ratelimit.ts`: ограничение частоты по адресу отправителя для публичных путей, ответ 429 с кодом `rate_limited` и заголовком `Retry-After` (FR-028)
-- [ ] T028 Реализовать `src/worker/routes/health.ts` — `GET /api/health`: проверки `redis`, `vector`, `blob`, `r2`, `openrouter`, `twitch`, `box`; `status` становится `degraded`, если хоть одна не `ok` (контракт knowledge-api.md)
-- [ ] T029 [P] Модульные тесты чистой логики времени в `tests/unit/time.test.ts`: разбор длительности Twitch, формат `?t=1h2m3s`, сдвиг меток по смещению куска
-- [ ] T030 [P] Модульные тесты разбиения в `tests/unit/sections.test.ts`: разбор заголовков разделов, границы кусков 1500–3000 знаков, перекрытие 200, обрезка раздела по 6000 знаков
+- [X] T016 [P] Описать привязки и секреты Worker как типы в `src/worker/env.ts`: бакет R2, Workflow, все секреты из T015 — без `any`
+- [X] T017 [P] Реализовать `src/shared/errors.ts`: коды `invalid_input`, `not_found`, `vod_unavailable`, `channel_not_set`, `already_processed`, `upstream_unavailable`, `rate_limited`, `internal`; формат ответа `{ error: { code, message, hint } }` с человеческим текстом на русском (контракт knowledge-api.md, принцип III)
+- [X] T018 [P] Реализовать `src/shared/time.ts`: разбор длительности Twitch (`7h12m35s`), перевод секунд в ссылку `?t=1h2m3s`, прибавление смещения куска к меткам сегментов
+- [X] T019 [P] Реализовать `src/shared/twitch.ts`: получение app-токена с кэшем в ключе `twitch:token` (TTL из ответа за вычетом запаса), `Get Videos` с `type=archive`, чтение `muted_segments`, определение записи «только для подписчиков»
+- [X] T020 [P] Реализовать `src/shared/openrouter.ts`: клиент официального SDK OpenAI с `baseURL: "https://openrouter.ai/api/v1"`; три функции — распознавание (`openai/whisper-large-v3-turbo`, `response_format: "verbose_json"`, `timestamp_granularities: ["segment"]`), составление документа (`inclusionai/ling-3.0-flash`), эмбеддинги (`openai/text-embedding-3-small`, 1536 измерений). Ключ не попадает в браузер
+- [X] T021 Реализовать `src/shared/registry.ts` по разделу 1 data-model.md: hash `channel` (`twitchUserId`, `login`, `displayName`, `watchFrom`, `addedAt`, `lastCheckedAt`, `lastCheckError`), hash `stream:<vodId>` со всеми полями и состояниями `processing | ready | skipped | failed`, sorted set `streams:index` (вес — `publishedAtUnix`). Инвариант: `stream:*` и `streams:index` меняются одной транзакцией
+- [X] T022 [P] Реализовать `src/shared/documents.ts`: запись и чтение `streams/<vodId>.md` в приватном бакете Upstash Blob; документ пишется один раз целиком
+- [X] T023 [P] Реализовать `src/shared/knowledge.ts`: запись кусков в Upstash Vector с идентификатором `<vodId>:<sectionIndex>:<chunkIndex>`, метаданными из раздела 3 data-model.md (включая `sectionText` — текст раздела целиком), поиск с фильтрами по `publishedAtUnix` и `category`, удаление по префиксу `<vodId>:`
+- [X] T024 [P] Реализовать `src/shared/sections.ts`: разбор размеченного текста документа на разделы по строке заголовка вида `## Тема [1:12:30 — 1:18:40 · Категория]`; нарезка раздела на куски 1500–3000 знаков с перекрытием 200 знаков, раздел короче — целиком; ограничение раздела 6000 знаков (лимит метаданных 48 КБ); контекстная строка в начале куска — дата эфира, категория, тема раздела
+- [X] T025 [P] Реализовать `src/shared/categories.ts`: сопоставление раздела с главой записи по времени начала — каждый раздел получает категорию, действовавшую в его момент (FR-014)
+- [X] T026 Реализовать `src/worker/index.ts`: обработчики `fetch` и `scheduled`, маршрутизация по путям контракта, отдача статики раньше логики Worker, единый формат ошибок из `errors.ts`
+- [X] T027 Реализовать `src/worker/ratelimit.ts`: ограничение частоты по адресу отправителя для публичных путей, ответ 429 с кодом `rate_limited` и заголовком `Retry-After` (FR-028)
+- [X] T028 Реализовать `src/worker/routes/health.ts` — `GET /api/health`: проверки `redis`, `vector`, `blob`, `r2`, `openrouter`, `twitch`, `box`; `status` становится `degraded`, если хоть одна не `ok` (контракт knowledge-api.md)
+- [X] T029 [P] Модульные тесты чистой логики времени в `tests/unit/time.test.ts`: разбор длительности Twitch, формат `?t=1h2m3s`, сдвиг меток по смещению куска
+- [X] T030 [P] Модульные тесты разбиения в `tests/unit/sections.test.ts`: разбор заголовков разделов, границы кусков 1500–3000 знаков, перекрытие 200, обрезка раздела по 6000 знаков
 
 **Контрольная точка**: `wrangler dev` поднимается, `/api/health` отвечает `ok` по всем проверкам, ключ OpenRouter, убранный из секретов, даёт `degraded` с понятным текстом.
 

@@ -19,16 +19,30 @@
   "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "twitch-audio" }],
 
   // Разбор записи как последовательность шагов с независимыми повторами.
-  "workflows": [
+  // Включается вместе с классом обработки (T037–T041): привязка к классу,
+  // которого нет в точке входа, ломает развёртывание.
+  // "workflows": [
+  //   {
+  //     "name": "stream-ingest",
+  //     "binding": "INGEST",
+  //     "class_name": "StreamIngestWorkflow"
+  //   }
+  // ],
+
+  // Ограничение частоты публичных путей встроенным счётчиком Cloudflare:
+  // защита не должна расходовать месячную квоту команд реестра.
+  "ratelimits": [
     {
-      "name": "stream-ingest",
-      "binding": "INGEST",
-      "class_name": "StreamIngestWorkflow"
+      "name": "PUBLIC_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 30, "period": 60 }
     }
   ],
 
   // Раз в час: найти новую запись канала и запустить прогон.
-  "triggers": { "crons": ["0 * * * *"] },
+  // Включается вместе с обработчиком расписания (T052) — расписание без
+  // обработчика делает развёртывание неработоспособным.
+  // "triggers": { "crons": ["0 * * * *"] },
 
   "observability": { "enabled": true }
 }
