@@ -68,8 +68,15 @@ export class AppError extends Error {
   }
 }
 
-/** Ошибка внешнего сервиса: причина сохраняется в `cause`, наружу уходит понятный текст. */
+/**
+ * Ошибка внешнего сервиса: причина сохраняется в `cause`, наружу уходит
+ * понятный текст. Причина ещё и пишется в журнал: внутри шага Workflow
+ * наружу видно только текст ошибки, и без этой записи отказ внешнего
+ * сервиса неотличим от любого другого — разбирать нечего.
+ */
 export function upstreamError(service: string, cause: unknown): AppError {
+  const reason = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause);
+  console.error(`[${service}] ${reason}`);
   return new AppError("upstream_unavailable", `Сервис «${service}» сейчас недоступен.`, { cause });
 }
 

@@ -27,11 +27,19 @@ export class Documents {
   /**
    * Документ пишется один раз и целиком — после того, как составлены все его
    * части. Половины документа в хранилище не бывает.
+   *
+   * `multipart` включён не ради размера: обычная запись подписывает заголовок
+   * `content-length`, но Workers при теле-потоке шлёт запрос chunked-кодировкой
+   * и этот заголовок до R2 не доносит — подпись не сходится, приходит 403
+   * `signature_mismatch`. Многочастный путь SDK отправляет часть готовым
+   * массивом байтов, и длина доходит неизменной. Проверено в workerd:
+   * обычная запись падает, многочастная проходит и читается обратно дословно.
    */
   async save(vodId: string, markdown: string): Promise<void> {
     try {
       await this.bucket.put(Documents.path(vodId), markdown, {
         contentType: "text/markdown; charset=utf-8",
+        multipart: true,
       });
     } catch (error) {
       throw upstreamError("хранилище документов", error);
@@ -64,12 +72,22 @@ export class Documents {
     }
   }
 
-  /** Проверка доступности для `/api/health`: ошибка не поднимается, возвращается признак. */
+  /**
+   * Проверка доступности для `/api/health`: ошибка не поднимается,
+   * возвращается признак.
+   *
+   * Проверяется именно запись, а не чтение: разбор записи упирается в `put`,
+   * и проверка чтением однажды уже отрапортовала «ок» на хранилище, в которое
+   * невозможно было записать.
+   */
   async healthy(): Promise<boolean> {
+    const probe = "streams/.health";
     try {
-      await this.bucket.exists("streams/.health");
+      await this.bucket.put(probe, "ok", { contentType: "text/plain; charset=utf-8", multipart: true });
+      await this.bucket.del(probe);
       return true;
-    } catch {
+    } catch (error) {
+      console.error(`[хранилище документов] проверка записи: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
