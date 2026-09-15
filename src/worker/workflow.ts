@@ -52,7 +52,11 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
   private async process(params: IngestParams, step: WorkflowStep, services: Services): Promise<void> {
     // --- распознавание ---
     // Шаг на кусок: отказ переигрывает один кусок, а не весь эфир.
-    // Кусок удаляется из хранилища сразу после успеха — аудио живёт минуты.
+    // Удаление куска — отдельный шаг: если распознавание переиграется после
+    // сбоя между выполнением и фиксацией шага (например, сброса Durable
+    // Object при деплое), кусок в хранилище всё ещё на месте. `R2.delete`
+    // отсутствующего ключа не ошибка, так что сам шаг удаления безопасно
+    // повторить.
     const perChunk: TranscriptSegment[][] = [];
     let language = "";
 
@@ -67,11 +71,14 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
           ...(language === "" ? {} : { language }),
         });
 
-        await this.env.AUDIO.delete(chunk.key);
         return {
           language: transcription.language,
           segments: shiftSegments(transcription.segments, chunk.offsetSeconds),
         };
+      });
+
+      await step.do(`удалить кусок ${chunk.index}`, async () => {
+        await this.env.AUDIO.delete(chunk.key);
       });
 
       if (language === "") language = result.language;
