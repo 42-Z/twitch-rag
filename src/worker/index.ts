@@ -89,7 +89,7 @@ const ROUTES: Route[] = [
   {
     method: "POST",
     pattern: "/api/internal/ingest-ready",
-    handler: (request, env) => handleIngestReady(request, env),
+    handler: (request, env) => handleIngestReady(request, env, createServices(env)),
   },
 ];
 

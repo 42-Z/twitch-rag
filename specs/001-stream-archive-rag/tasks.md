@@ -53,9 +53,9 @@ Cloudflare.
 - [X] T010 [P] Создать базу реестра: `upstash redis create --name twitch-rag --region eu-west-1`; получить полный и read-only токены (скилл `upstash:upstash-cli`)
 - [X] T011 [P] Создать бакет документов: `upstash blob create --name twitch-docs --visibility private`
 - [X] T012 [P] Создать бакет аудио: `wrangler r2 bucket create twitch-audio`
-- [ ] T013 Создать в панели R2 токен доступа к API S3 (чтение и запись в `twitch-audio`) — бокс выгружает куски снаружи Cloudflare и привязкой пользоваться не может; ключ и секрет идут в переменные бокса
+- [X] T013 Создать в панели R2 токен доступа к API S3 (чтение и запись в `twitch-audio`) — бокс выгружает куски снаружи Cloudflare и привязкой пользоваться не может; ключ и секрет идут в переменные бокса
 - [X] T014 [P] Зарегистрировать приложение на dev.twitch.tv/console/apps/create, получить `TWITCH_CLIENT_ID` и `TWITCH_CLIENT_SECRET`
-- [ ] T015 Заполнить локальный `.env` по `.env.example` и установить секреты на сервере: `wrangler secret put` для `OPENROUTER_API_KEY`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_TOKEN`, `UPSTASH_BLOB_TOKEN`, `UPSTASH_BOX_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `INGEST_SECRET`, `APP_ADMIN_TOKEN`
+- [X] T015 Заполнить локальный `.env` по `.env.example` и установить секреты на сервере: `wrangler secret put` для `OPENROUTER_API_KEY`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_TOKEN`, `UPSTASH_BLOB_TOKEN`, `UPSTASH_BOX_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `INGEST_SECRET`, `APP_ADMIN_TOKEN`
 
 ### Общий слой
 

@@ -41,8 +41,7 @@
   "triggers": { "crons": ["0 * * * *"] },
 
   // Публичный адрес сервиса — не секрет, известен из адресной строки браузера.
-  // Значение по умолчанию для workers.dev; переопределяется при своём домене.
-  "vars": { "WORKER_URL": "https://twitch-rag.<укажите-поддомен>.workers.dev" },
+  "vars": { "WORKER_URL": "https://twitch-rag.crbanana.workers.dev" },
 
   "observability": { "enabled": true }
 }

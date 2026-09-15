@@ -7,8 +7,7 @@
  */
 
 import { AppError } from "../../shared/errors.ts";
-import type { Env, IngestParams } from "../env.ts";
-import { createServices } from "../env.ts";
+import type { Env, IngestParams, Services } from "../env.ts";
 
 export interface IngestReadyBody {
   vodId: string;
@@ -38,16 +37,27 @@ function isFailure(body: unknown): body is IngestFailedBody {
 }
 
 /**
+ * Инстанс Workflow называется по vodId: `create` с занятым id бросает
+ * ошибку, и это ровно нужный признак повтора. Реестр для дедупликации не
+ * годится — запись уже стоит в `processing` с того момента, как разбор
+ * запущен (`startStreamIngest`), то есть ко времени этого сигнала она
+ * `processing` всегда, и по одному этому нельзя отличить первый вызов от
+ * повторного.
+ */
+function workflowInstanceId(vodId: string): string {
+  return `ingest-${vodId}`;
+}
+
+/**
  * Сигнал о готовности кусков либо об отказе бокса.
  *
- * Повторный вызов для записи, уже находящейся в обработке, отвечает 200 без
- * создания нового инстанса — бокс мог повторить сигнал после сбоя сети.
+ * Повторный вызов для записи, чей инстанс уже создан, отвечает 200 без
+ * создания нового — бокс мог повторить сигнал после сбоя сети.
  */
-export async function handleIngestReady(request: Request, env: Env): Promise<Response> {
+export async function handleIngestReady(request: Request, env: Env, services: Services): Promise<Response> {
   requireIngestSecret(request, env);
 
   const body = await parseBody(request);
-  const services = createServices(env);
 
   if (isFailure(body)) {
     await services.registry.patchStream(body.vodId, {
@@ -64,10 +74,6 @@ export async function handleIngestReady(request: Request, env: Env): Promise<Res
   }
 
   const existing = await services.registry.getStream(payload.vodId);
-  if (existing !== undefined && existing.status === "processing") {
-    // Уже запущено — вероятный повтор сигнала после сетевого сбоя у бокса.
-    return Response.json({ vodId: payload.vodId, status: "processing" });
-  }
 
   await services.registry.putStream({
     vodId: payload.vodId,
@@ -93,8 +99,17 @@ export async function handleIngestReady(request: Request, env: Env): Promise<Res
     chunks: payload.chunks,
   };
 
-  const instance = await env.INGEST.create({ id: `${payload.vodId}-${Date.now()}`, params });
-  return Response.json({ vodId: payload.vodId, status: "processing", instanceId: instance.id }, { status: 202 });
+  try {
+    const instance = await env.INGEST.create({ id: workflowInstanceId(payload.vodId), params });
+    return Response.json({ vodId: payload.vodId, status: "processing", instanceId: instance.id }, { status: 202 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/exist/i.test(message)) {
+      // Не про занятый id — настоящий сбой, а не повтор сигнала.
+      throw new AppError("upstream_unavailable", "Не удалось создать инстанс разбора.", { cause: error });
+    }
+    return Response.json({ vodId: payload.vodId, status: "processing" });
+  }
 }
 
 function nowUnix(): number {
