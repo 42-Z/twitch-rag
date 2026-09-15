@@ -27,15 +27,15 @@ Worker и сквозную проверку по `quickstart.md`.
 **Цель**: привести шаблон Bun-приложения к структуре из плана и настроить сборку под
 Cloudflare.
 
-- [ ] T001 Установить зависимости в `package.json`: `agents`, `@modelcontextprotocol/sdk`, `@upstash/vector`, `@upstash/redis`, `@upstash/blob`, `@upstash/box`, `zod`, `@aws-sdk/client-s3` (выгрузка кусков в R2 из бокса); в `devDependencies` — `wrangler`, `@cloudflare/workers-types`. `openai` уже установлен (7.15.0)
-- [ ] T002 Удалить шаблонный код: `src/index.ts`, `src/App.tsx`, `src/APITester.tsx`, `src/frontend.tsx`, `src/index.html`, `src/index.css`, `src/logo.svg`, `src/react.svg`. Сохранить `src/components/ui/`, `src/lib/utils.ts`, `styles/globals.css`, `components.json`
-- [ ] T003 Создать дерево каталогов `src/worker/routes/`, `src/pipeline/`, `src/shared/`, `src/ui/components/`, `src/ui/lib/`, `tests/unit/`, `tests/contract/`, `tests/integration/` согласно разделу «Source Code» в plan.md
-- [ ] T004 Создать `wrangler.jsonc`: `main` — `src/worker/index.ts`, привязка бакета R2 `twitch-audio`, привязка Workflow, cron-расписание раз в час, `assets` с каталогом `dist` и порядком обслуживания «статика раньше Worker» (иначе исчерпание лимита превращает страницу в 429)
-- [ ] T005 [P] Настроить `tsconfig.json`: типы `@cloudflare/workers-types` для `src/worker/**` и `src/shared/**`, DOM-типы для `src/ui/**`, `strict: true`, запрет `any` без комментария-обоснования (принцип II конституции)
-- [ ] T006 [P] Создать `.env.example` с девятью значениями из quickstart.md: `OPENROUTER_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `UPSTASH_REDIS_READONLY_TOKEN`, `UPSTASH_BLOB_TOKEN`, `UPSTASH_BOX_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `INGEST_SECRET`, `APP_ADMIN_TOKEN`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
-- [ ] T007 [P] Обновить `build.ts`: точка входа `src/ui/index.html`, вывод в `dist`, подстановка публичных значений `BUN_PUBLIC_REGISTRY_URL` и `BUN_PUBLIC_REGISTRY_READONLY_TOKEN` в сборку интерфейса
-- [ ] T008 [P] Прописать скрипты в `package.json`: `build` (сборка интерфейса), `deploy` (`wrangler deploy`), `dev:worker` (`wrangler dev`), `test` (`bun test`), `typecheck` (`tsc --noEmit`)
-- [ ] T009 [P] Выверить `.gitignore`: `.env`, `.box`, `dist`, `node_modules`, `.wrangler`
+- [X] T001 Установить зависимости в `package.json`: `agents`, `@modelcontextprotocol/sdk`, `@upstash/vector`, `@upstash/redis`, `@upstash/blob`, `@upstash/box`, `zod`, `aws4fetch` (подпись запросов к R2 по протоколу S3 из бокса — 3 КБ вместо мегабайтного AWS SDK); в `devDependencies` — `wrangler`, `@cloudflare/workers-types`. `openai` уже установлен (7.15.0)
+- [X] T002 Удалить шаблонный код: `src/index.ts`, `src/App.tsx`, `src/APITester.tsx`, `src/frontend.tsx`, `src/index.html`, `src/index.css`, `src/logo.svg`, `src/react.svg`. Сохранить `src/components/ui/`, `src/lib/utils.ts`, `styles/globals.css`, `components.json`
+- [X] T003 Создать дерево каталогов `src/worker/routes/`, `src/pipeline/`, `src/shared/`, `src/ui/components/`, `src/ui/lib/`, `tests/unit/`, `tests/contract/`, `tests/integration/` согласно разделу «Source Code» в plan.md
+- [X] T004 Создать `wrangler.jsonc`: `main` — `src/worker/index.ts`, привязка бакета R2 `twitch-audio`, привязка Workflow, cron-расписание раз в час, `assets` с каталогом `dist` и порядком обслуживания «статика раньше Worker» (иначе исчерпание лимита превращает страницу в 429)
+- [X] T005 [P] Настроить `tsconfig.json`: типы `@cloudflare/workers-types` для `src/worker/**` и `src/shared/**`, DOM-типы для `src/ui/**`, `strict: true`, запрет `any` без комментария-обоснования (принцип II конституции)
+- [X] T006 [P] Создать `.env.example` с девятью значениями из quickstart.md: `OPENROUTER_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `UPSTASH_REDIS_READONLY_TOKEN`, `UPSTASH_BLOB_TOKEN`, `UPSTASH_BOX_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `INGEST_SECRET`, `APP_ADMIN_TOKEN`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
+- [X] T007 [P] Обновить `build.ts`: точка входа `src/ui/index.html`, вывод в `dist`, подстановка публичных значений `BUN_PUBLIC_REGISTRY_URL` и `BUN_PUBLIC_REGISTRY_READONLY_TOKEN` в сборку интерфейса
+- [X] T008 [P] Прописать скрипты в `package.json`: `build` (сборка интерфейса), `deploy` (`wrangler deploy`), `dev:worker` (`wrangler dev`), `test` (`bun test`), `typecheck` (`tsc --noEmit`)
+- [X] T009 [P] Выверить `.gitignore`: `.env`, `.box`, `dist`, `node_modules`, `.wrangler`
 
 **Контрольная точка**: `bun install` и `bun run typecheck` проходят, шаблонного кода не осталось.
 

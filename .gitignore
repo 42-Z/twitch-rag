@@ -43,3 +43,4 @@ tmp
 
 # python-кэш скриптов SpecKit
 __pycache__
+.wrangler
