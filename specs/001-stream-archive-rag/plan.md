@@ -188,7 +188,7 @@ build.ts                        # сборка интерфейса в dist (у�
 | Бакет Upstash Blob | `upstash blob create --name twitch-docs --visibility private` | создать |
 | Бокс Upstash | `box create --no-repl --runtime node`, затем установка ffmpeg и yt-dlp и `box snapshot` | **создан** (`fun-goshawk-88276`), снимок сделан |
 | Бакет R2 | `wrangler r2 bucket create twitch-audio` | создать |
-| Приложение Twitch | console.twitch.tv → регистрация приложения | создать |
+| Приложение Twitch | dev.twitch.tv/console/apps/create → регистрация приложения | создать |
 | Ключ OpenRouter | openrouter.ai | **есть** |
 
 ### И3. Конфигурация Cloudflare
