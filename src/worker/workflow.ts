@@ -112,9 +112,9 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     const partCount = Math.max(1, Math.ceil(transcriptText.length / CHARS_PER_PART));
     const parts = planDocumentParts(params.durationSeconds, params.categories, partCount);
 
-    const written: string[] = [];
+    const written: ParsedSection[] = [];
     for (const [index, part] of parts.entries()) {
-      const text = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () =>
+      const composed = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () =>
         await services.models.composeDocumentPart({
           fullTranscript: transcriptText,
           part,
@@ -123,23 +123,15 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
           categories: params.categories,
         }),
       );
-      written.push(text);
+      written.push(...composed.map((section) => ({ ...section, category: "" })));
     }
 
     // --- разделы ---
-    const sections = await step.do("разобрать документ на разделы", async () => {
-      const document = written.join("\n\n");
-      // Заголовок, который не удалось прочитать, уносит с собой весь свой
-      // раздел. Молча это терять нельзя: так однажды пропали два часа эфира.
-      const unreadable = unreadableHeadings(document);
-      if (unreadable.length > 0) {
-        console.warn(`нечитаемые заголовки по ${params.vodId}: ${JSON.stringify(unreadable.slice(0, 5))}`);
-      }
-      const parsed = parseDocument(document);
-      const normalized = normalizeSections(parsed);
-      const withCategories = assignCategories(normalized, params.categories);
+    const sections = await step.do("привести разделы к рабочему виду", async () => {
+      const ordered = [...written].sort((a, b) => a.startSeconds - b.startSeconds);
+      const withCategories = assignCategories(normalizeSections(ordered), params.categories);
       if (withCategories.length === 0) {
-        throw new Error("модель не дала ни одного раздела с заголовком");
+        throw new Error("после приведения не осталось ни одного раздела");
       }
       return withCategories;
     });

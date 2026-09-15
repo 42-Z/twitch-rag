@@ -92,12 +92,13 @@ export class OpenRouter {
    * отсылки внутри эфира теряют смысл, если видеть его кусками, а выход
    * модели не вмещает пересказ семи часов за раз.
    */
-  async composeDocumentPart(request: DocumentPartRequest): Promise<string> {
+  async composeDocumentPart(request: DocumentPartRequest): Promise<ComposedSection[]> {
     try {
       const completion = await this.client.chat.completions.create({
         model: MODELS.document,
         max_tokens: MAX_OUTPUT_TOKENS,
         temperature: 0.3,
+        response_format: { type: "json_object" },
         messages: [
           { role: "system", content: DOCUMENT_SYSTEM_PROMPT },
           { role: "user", content: buildDocumentPrompt(request) },
@@ -107,7 +108,7 @@ export class OpenRouter {
       if (text.trim() === "") {
         throw new AppError("upstream_unavailable", "Модель вернула пустой документ.");
       }
-      return text.trim();
+      return parseComposedSections(text);
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw upstreamError("составление документа", error);
@@ -146,21 +147,26 @@ export class OpenRouter {
   }
 }
 
+/**
+ * Ответ просится в JSON, а не размеченным текстом, потому что время раздела —
+ * число, и договориться о его записи словами не вышло: одна и та же модель на
+ * трёх прогонах выдала `0:47:55`, `0:165` и голые секунды, и каждый раз разбор
+ * терял вместе с непонятым заголовком часы эфира. В JSON число приходит числом.
+ */
 const DOCUMENT_SYSTEM_PROMPT = `Ты составляешь документ о трансляции по её расшифровке.
+
+Ответ — только JSON такого вида, без markdown и пояснений вокруг:
+{"sections": [{"title": "Спор о правилах сервера", "startSeconds": 4040, "endSeconds": 4745, "text": "Текст раздела в несколько абзацев."}]}
 
 Правила:
 1. Пиши связный человекочитаемый текст о содержании эфира, а не набор реплик и не список тезисов. Человек должен понять, о чём был стрим, прочитав документ и не открывая запись.
 2. Опирайся только на то, что прозвучало в расшифровке. Ничего не додумывай и не добавляй сведений извне.
-3. Разбей свой участок на разделы по темам. Каждый раздел начинается строкой заголовка строго такого вида:
-   ## {заголовок} [Ч:ММ:СС — Ч:ММ:СС · Категория]
-   Вместо {заголовок} подставь собственное название темы этого раздела в несколько слов — по тому, что в разделе происходит. Слово «заголовок» и фигурные скобки в готовую строку не переносятся.
-   Пример готовой строки: ## Спор о правилах сервера [1:07:20 — 1:19:05 · Minecraft]
-   Время — от начала записи, всегда тремя числами через двоеточие, даже в первый час: 0:03:20, а не 3:20 и не 0:200. Категорию бери из списка категорий эфира по времени начала раздела.
+3. Разбей свой участок на разделы по темам. Поле title — собственное название темы в несколько слов, по тому, что в разделе происходит. Поля startSeconds и endSeconds — целые числа секунд от начала записи.
 4. Раздел должен быть понятен сам по себе, без чтения соседних разделов: называй участников, предметы и обстоятельства, а не «он», «это», «там же».
 5. Пропускай участки без внятной речи: музыку, тишину, заглушённые фрагменты. Разделов по ним не создавай.
 6. Разделы идут подряд по времени и покрывают весь участок целиком, без пропусков.
 7. Размер раздела — от нескольких абзацев; слишком мелкие темы объединяй.
-8. Никаких вступлений, заключений и обращений к читателю. Только заголовки разделов и текст под ними.`;
+8. Никаких вступлений, заключений и обращений к читателю: в поле text только содержание раздела.`;
 
 function buildDocumentPrompt(request: DocumentPartRequest): string {
   const categories = request.categories
@@ -179,6 +185,51 @@ ${categories === "" ? "- категории не указаны" : categories}
 Расшифровка эфира целиком (время в секундах от начала записи):
 
 ${request.fullTranscript}`;
+}
+
+/** Раздел, каким его вернула модель: категория проставляется позже, по времени. */
+export interface ComposedSection {
+  title: string;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+/**
+ * Разбор ответа модели. Режим JSON гарантирует синтаксис, но не содержимое:
+ * раздел без текста или с временем задом наперёд отбрасывается здесь, чтобы
+ * дальше по конвейеру шло только пригодное.
+ */
+export function parseComposedSections(raw: string): ComposedSection[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new AppError("upstream_unavailable", "Модель вернула не JSON.");
+  }
+
+  const list = (parsed as { sections?: unknown }).sections;
+  if (!Array.isArray(list)) {
+    throw new AppError("upstream_unavailable", "В ответе модели нет разделов.");
+  }
+
+  const sections: ComposedSection[] = [];
+  for (const item of list) {
+    const section = item as Record<string, unknown>;
+    const title = typeof section["title"] === "string" ? section["title"].trim() : "";
+    const text = typeof section["text"] === "string" ? section["text"].trim() : "";
+    const start = Math.round(Number(section["startSeconds"]));
+    const end = Math.round(Number(section["endSeconds"]));
+    if (title === "" || text === "" || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      continue;
+    }
+    sections.push({ title, startSeconds: Math.max(0, start), endSeconds: end, text });
+  }
+
+  if (sections.length === 0) {
+    throw new AppError("upstream_unavailable", "Модель не дала ни одного пригодного раздела.");
+  }
+  return sections;
 }
 
 /** Расшифровка в виде, пригодном для чтения моделью: время и текст, без служебных полей. */
