@@ -123,7 +123,7 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     // На расписании нет входящего запроса, откуда обычно берётся адрес —
     // он задан переменной окружения (публичный адрес сервиса, не секрет).
-    ctx.waitUntil(runScheduledCheck(env, createServices(env), env.WORKER_URL));
+    ctx.waitUntil(runScheduledCheck(createServices(env), env.WORKER_URL));
     ctx.waitUntil(cleanupStaleAudio(env));
   },
 

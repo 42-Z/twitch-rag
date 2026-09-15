@@ -7,13 +7,11 @@
 
 import type { Env } from "../env.ts";
 import { createServices } from "../env.ts";
-import { BoxRunner } from "../../shared/box.ts";
 
 type CheckName = "redis" | "vector" | "blob" | "r2" | "openrouter" | "twitch" | "box";
 
 export async function handleHealth(env: Env): Promise<Response> {
   const services = createServices(env);
-  const box = new BoxRunner({ boxId: env.UPSTASH_BOX_ID, apiKey: env.UPSTASH_BOX_API_KEY });
 
   const checks: Array<[CheckName, Promise<boolean>]> = [
     ["redis", services.registry.healthy()],
@@ -22,7 +20,7 @@ export async function handleHealth(env: Env): Promise<Response> {
     ["r2", r2Healthy(env)],
     ["openrouter", services.models.healthy()],
     ["twitch", services.twitch.healthy()],
-    ["box", box.healthy()],
+    ["box", services.box.healthy()],
   ];
 
   const results = await Promise.all(checks.map(([, promise]) => promise));

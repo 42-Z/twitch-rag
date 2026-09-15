@@ -6,7 +6,6 @@
 
 import { z } from "zod";
 import { AppError } from "../../shared/errors.ts";
-import { BoxRunner } from "../../shared/box.ts";
 import { skipReason } from "../../shared/twitch.ts";
 import type { Env, Services } from "../env.ts";
 
@@ -58,7 +57,7 @@ export async function handleAddStream(
     return Response.json({ vodId, status: "processing" }, { status: 202 });
   }
 
-  await startStreamIngest(vodId, "manual", env, services, callbackBaseUrl);
+  await startStreamIngest(vodId, "manual", services, callbackBaseUrl);
   return Response.json({ vodId, status: "processing" }, { status: 202 });
 }
 
@@ -69,7 +68,6 @@ export async function handleAddStream(
 export async function startStreamIngest(
   vodId: string,
   source: "auto" | "manual",
-  env: Env,
   services: Services,
   callbackBaseUrl: string,
   previousAttempts = 0,
@@ -107,8 +105,7 @@ export async function startStreamIngest(
     processedAt: Math.floor(Date.now() / 1000),
   });
 
-  const box = new BoxRunner({ boxId: env.UPSTASH_BOX_ID, apiKey: env.UPSTASH_BOX_API_KEY });
-  await box.startIngest({
+  await services.box.startIngest({
     vodId,
     url: video.url,
     callbackUrl: `${callbackBaseUrl}/api/internal/ingest-ready`,

@@ -7,7 +7,7 @@
  * квоту процессорного времени бокса.
  */
 
-import type { Env, Services } from "./env.ts";
+import type { Services } from "./env.ts";
 import { startStreamIngest } from "./routes/streams.ts";
 import { MAX_ATTEMPTS, isStale, type StreamRecord } from "../shared/registry.ts";
 import type { TwitchVideo } from "../shared/twitch.ts";
@@ -42,7 +42,7 @@ export function selectNextVideo(
   );
 }
 
-export async function runScheduledCheck(env: Env, services: Services, callbackBaseUrl: string): Promise<void> {
+export async function runScheduledCheck(services: Services, callbackBaseUrl: string): Promise<void> {
   const channel = await services.registry.getChannel();
   if (channel === undefined) return; // канал ещё не указан — не ошибка, просто нечего делать
 
@@ -59,7 +59,7 @@ export async function runScheduledCheck(env: Env, services: Services, callbackBa
     const next = selectNextVideo(videos, known, channel.watchFrom, Math.floor(Date.now() / 1000));
     if (next !== undefined) {
       const previousAttempts = known.get(next.vodId)?.attempts ?? 0;
-      await startStreamIngest(next.vodId, "auto", env, services, callbackBaseUrl, previousAttempts);
+      await startStreamIngest(next.vodId, "auto", services, callbackBaseUrl, previousAttempts);
     }
 
     await services.registry.recordCheck({ at: Math.floor(Date.now() / 1000) });

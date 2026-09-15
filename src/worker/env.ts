@@ -11,6 +11,7 @@ import { Knowledge } from "../shared/knowledge.ts";
 import { Documents } from "../shared/documents.ts";
 import { OpenRouter } from "../shared/openrouter.ts";
 import { Twitch } from "../shared/twitch.ts";
+import { BoxRunner } from "../shared/box.ts";
 
 export interface Env {
   // --- привязки платформы ---
@@ -61,6 +62,7 @@ export interface Services {
   documents: Documents;
   models: OpenRouter;
   twitch: Twitch;
+  box: BoxRunner;
 }
 
 /**
@@ -84,5 +86,6 @@ export function createServices(env: Env): Services {
       { clientId: env.TWITCH_CLIENT_ID, clientSecret: env.TWITCH_CLIENT_SECRET },
       registry,
     ),
+    box: new BoxRunner({ boxId: env.UPSTASH_BOX_ID, apiKey: env.UPSTASH_BOX_API_KEY }),
   };
 }
