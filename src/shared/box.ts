@@ -27,12 +27,16 @@ export class BoxRunner {
    * `/api/internal/ingest-ready`.
    */
   async startIngest(input: { vodId: string; url: string; callbackUrl: string }): Promise<void> {
+    const vodId = requireVodId(input.vodId);
+    const url = requireHttpsUrl(input.url, "адрес записи");
+    const callbackUrl = requireHttpsUrl(input.callbackUrl, "адрес обратного вызова");
+
     const command =
       `( node ${PIPELINE_PATH}` +
-      ` --vod ${shellArg(input.vodId)}` +
-      ` --url ${shellArg(input.url)}` +
-      ` --callback ${shellArg(input.callbackUrl)}` +
-      ` > /workspace/home/ingest-${shellArg(input.vodId)}.log 2>&1 & )`;
+      ` --vod '${vodId}'` +
+      ` --url '${url}'` +
+      ` --callback '${callbackUrl}'` +
+      ` > /workspace/home/ingest-${vodId}.log 2>&1 & )`;
 
     await this.withRetries(async () => {
       const box = await Box.get(this.config.boxId, { apiKey: this.config.apiKey });
@@ -78,13 +82,28 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Аргумент для команды бокса. Значения приходят из наших же данных, но
- * идентификатор записи попадает в систему снаружи, а команда уходит в
- * оболочку — поэтому проверяется состав, а не экранируется результат.
+ * Значения уходят в командную оболочку бокса, а идентификатор записи ещё и
+ * становится частью пути к журналу. Поэтому каждое проверяется по своей форме,
+ * а не общим набором «безопасных символов»: набор, разрешающий точку и слэш,
+ * пропускает и `../..`, и подстановку чужого пути.
  */
-function shellArg(value: string): string {
-  if (!/^[A-Za-z0-9:/?=._-]+$/.test(value)) {
-    throw new AppError("invalid_input", "Недопустимое значение для запуска разбора.");
+function requireVodId(value: string): string {
+  if (!/^\d{1,20}$/.test(value)) {
+    throw new AppError("invalid_input", "Идентификатор записи Twitch состоит только из цифр.");
+  }
+  return value;
+}
+
+function requireHttpsUrl(value: string, what: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new AppError("invalid_input", `Неверный ${what}.`);
+  }
+  // Кавычка или перевод строки вырвались бы из одинарных кавычек команды.
+  if (parsed.protocol !== "https:" || /['"\\\s]/.test(value)) {
+    throw new AppError("invalid_input", `Неверный ${what}: ожидается адрес https без пробелов.`);
   }
   return value;
 }
