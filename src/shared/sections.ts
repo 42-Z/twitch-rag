@@ -1,13 +1,12 @@
 /**
- * Документ трансляции → разделы → куски для векторного поиска.
+ * Разделы трансляции → куски для векторного поиска.
  *
- * Разделы приходят от модели размеченным текстом, а не JSON: модель пишет
- * документ с заголовками, структура возникает как побочный продукт письма.
- * Разбор заголовков — наша работа, и она обязана переживать неаккуратность
- * модели: другое тире, пропущенную категорию, лишние пробелы.
+ * Разделы приходят от модели готовой структурой (`openrouter.ts`), здесь они
+ * приводятся к рабочему размеру и режутся на куски. Размер — не придирка:
+ * слишком длинный раздел не влезает в метаданные куска, слишком короткий не
+ * находится и не читается сам по себе.
  */
 
-import { formatClock, parseClock } from "./time.ts";
 
 export interface ParsedSection {
   title: string;
@@ -30,70 +29,6 @@ const MAX_CHUNK_CHARS = 3000;
 const CHUNK_OVERLAP_CHARS = 200;
 /** Короче этого раздел не живёт сам по себе и склеивается с соседним. */
 const MIN_SECTION_CHARS = 400;
-
-/**
- * Строка заголовка раздела:
- * `## Причины перехода на новый движок [1:12:30 — 1:18:40 · World of Warcraft]`
- *
- * Тире принимается любое, категория необязательна: без неё раздел получит
- * категорию по времени начала (`categories.ts`).
- */
-/**
- * Время в заголовке разбирается свободнее, чем просили в промпте: модель для
- * начала эфира пишет то `0:47:55`, то `0:165` — минуты с секундами через край.
- * Строгий шаблон такой заголовок не узнавал, и целая часть документа молча
- * пропадала (потеряно два часа эфира на живом прогоне). Переполнение
- * `parseClock` считает правильно, так что достаточно не мешать ему.
- */
-const HEADING =
-  /^##\s+(.+?)\s*\[\s*(\d{1,3}:\d{1,3}(?::\d{1,3})?)\s*[—–-]\s*(\d{1,3}:\d{1,3}(?::\d{1,3})?)\s*(?:·\s*(.+?)\s*)?\]\s*$/;
-
-/** Строка выглядит заголовком раздела, но прочитать её не удалось. */
-export function unreadableHeadings(markdown: string): string[] {
-  return markdown
-    .split("\n")
-    .filter((line) => /^##\s+\S/.test(line) && !HEADING.test(line))
-    .map((line) => line.trim());
-}
-
-export function parseDocument(markdown: string): ParsedSection[] {
-  const sections: ParsedSection[] = [];
-  let current: ParsedSection | undefined;
-  let body: string[] = [];
-
-  const flush = () => {
-    if (current === undefined) return;
-    sections.push({ ...current, text: body.join("\n").trim() });
-    body = [];
-  };
-
-  for (const line of markdown.split("\n")) {
-    const heading = line.match(HEADING);
-    if (heading) {
-      flush();
-      const [, title, from, to, category] = heading;
-      current = {
-        title: (title ?? "").trim(),
-        text: "",
-        startSeconds: parseClock(from ?? "0:00"),
-        endSeconds: parseClock(to ?? "0:00"),
-        category: (category ?? "").trim(),
-      };
-      continue;
-    }
-    if (current !== undefined) body.push(line);
-  }
-  flush();
-
-  return sections.filter((section) => section.text.length > 0);
-}
-
-/** Собрать документ обратно — тем же форматом, каким его читает `parseDocument`. */
-export function renderSection(section: ParsedSection): string {
-  const range = `${formatClock(section.startSeconds)} — ${formatClock(section.endSeconds)}`;
-  const suffix = section.category === "" ? range : `${range} · ${section.category}`;
-  return `## ${section.title} [${suffix}]\n\n${section.text}`;
-}
 
 /**
  * Приведение разделов к рабочему размеру.

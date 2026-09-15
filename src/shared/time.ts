@@ -98,3 +98,22 @@ export function mergeTranscripts(chunks: readonly TranscriptSegment[][]): Transc
 function normalizeForCompare(text: string): string {
   return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
+
+/** Язык, выпавший на большинстве кусков; пустые определения не в счёт. */
+export function prevailingLanguage(languages: readonly string[]): string {
+  const counts = new Map<string, number>();
+  for (const raw of languages) {
+    const language = raw.trim().toLowerCase();
+    if (language === "") continue;
+    counts.set(language, (counts.get(language) ?? 0) + 1);
+  }
+  let best = "";
+  let bestCount = 0;
+  for (const [language, count] of counts) {
+    if (count > bestCount) {
+      best = language;
+      bestCount = count;
+    }
+  }
+  return best;
+}

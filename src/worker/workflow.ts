@@ -10,14 +10,17 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import type { Env, IngestParams, Services } from "./env.ts";
 import { createServices } from "./env.ts";
-import { mergeTranscripts, shiftSegments, type TranscriptSegment } from "../shared/time.ts";
+import {
+  mergeTranscripts,
+  shiftSegments,
+  prevailingLanguage,
+  type TranscriptSegment,
+} from "../shared/time.ts";
 import { vodUrlAt } from "../shared/time.ts";
 import { renderTranscript } from "../shared/openrouter.ts";
 import { planDocumentParts, assignCategories, uniqueCategories } from "../shared/categories.ts";
 import {
-  parseDocument,
   normalizeSections,
-  unreadableHeadings,
   chunkSection,
   buildContextLine,
   type ParsedSection,
@@ -63,7 +66,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // отсутствующего ключа не ошибка, так что сам шаг удаления безопасно
     // повторить.
     const perChunk: TranscriptSegment[][] = [];
-    let language = "";
+    const languages: string[] = [];
 
     for (const chunk of params.chunks) {
       const result = await step.do(`распознать кусок ${chunk.index}`, async () => {
@@ -71,9 +74,11 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
         if (object === null) throw new Error(`кусок ${chunk.key} исчез из хранилища`);
 
         const audio = await object.arrayBuffer();
+        // Язык не подсказывается: эфир открывается музыкой или тишиной, на
+        // которых распознавание ошибается, а навязанный язык портит все
+        // следующие куски — русская речь возвращалась английской абракадаброй.
         const transcription = await services.models.transcribe(audio, {
           filename: `chunk-${chunk.index}.m4a`,
-          ...(language === "" ? {} : { language }),
         });
 
         return {
@@ -86,9 +91,13 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
         await this.env.AUDIO.delete(chunk.key);
       });
 
-      if (language === "") language = result.language;
+      languages.push(result.language);
       perChunk.push(result.segments);
     }
+
+    // Язык эфира — тот, на котором говорят в большинстве кусков, а не тот,
+    // что выпал на первом.
+    const language = prevailingLanguage(languages);
 
     const transcript = mergeTranscripts(perChunk);
     if (transcript.length === 0) {
@@ -190,9 +199,11 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
         speechSeconds: Math.round(speechSeconds),
         docPath: Documents.path(params.vodId),
         processedAt: nowUnix(),
+        // Пометка выставляется всегда, в том числе пустая: иначе на успешно
+        // разобранной записи остаётся висеть причина отказа прошлой попытки.
         // В пометке именно длительность: «один участок» может означать и
         // минуту тишины, и четыре часа потерянного эфира.
-        ...(gaps.length > 0 ? { reason: `Разделы не покрывают ${formatGaps(gaps)} эфира.` } : {}),
+        reason: gaps.length > 0 ? `Разделы не покрывают ${formatGaps(gaps)} эфира.` : "",
       });
     });
 

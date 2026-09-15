@@ -7,6 +7,7 @@ import {
   parseClock,
   shiftSegments,
   mergeTranscripts,
+  prevailingLanguage,
 } from "../../src/shared/time.ts";
 
 describe("длительность записи Twitch", () => {
@@ -88,5 +89,22 @@ describe("приведение времени куска ко времени з�
       [{ start: 597, end: 602, text: "совсем другое" }],
     ]);
     expect(merged).toHaveLength(2);
+  });
+});
+
+describe("язык эфира", () => {
+  test("берётся по большинству кусков, а не по первому", () => {
+    // Живой случай: эфир открывается музыкой, на ней распознавание уверенно
+    // говорит «английский», хотя весь эфир русский.
+    expect(prevailingLanguage(["en", "ru", "ru", "ru", "en", "ru"])).toBe("ru");
+  });
+
+  test("пустые определения не в счёт", () => {
+    expect(prevailingLanguage(["", "", "ru"])).toBe("ru");
+    expect(prevailingLanguage(["", ""])).toBe("");
+  });
+
+  test("регистр и пробелы не создают разных языков", () => {
+    expect(prevailingLanguage(["RU", " ru ", "en"])).toBe("ru");
   });
 });
