@@ -64,9 +64,74 @@ export function DocumentView({ vodId, onClose }: DocumentViewProps): React.JSX.E
         </Alert>
       )}
 
-      {state.kind === "ready" && (
-        <article className="prose prose-sm max-w-none whitespace-pre-wrap">{state.text}</article>
-      )}
+      {state.kind === "ready" && <article className="space-y-3">{renderDocument(state.text)}</article>}
     </div>
+  );
+}
+
+/**
+ * Показ документа. Разметку документ использует свою, известную наперёд —
+ * заголовок, строка сведений, заголовки разделов с временем и абзацы, — так
+ * что разбирается она здесь же, без библиотеки на такой случай.
+ */
+function renderDocument(text: string): React.JSX.Element[] {
+  const blocks: React.JSX.Element[] = [];
+  let paragraph: string[] = [];
+
+  const flush = () => {
+    if (paragraph.length === 0) return;
+    blocks.push(
+      <p key={`p${blocks.length}`} className="text-sm leading-relaxed">
+        {renderInline(paragraph.join(" "))}
+      </p>,
+    );
+    paragraph = [];
+  };
+
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+
+    if (trimmed === "") {
+      flush();
+      continue;
+    }
+
+    const section = /^##\s+(.+?)\s*\[(.+?)\]\s*$/.exec(trimmed);
+    if (section) {
+      flush();
+      blocks.push(
+        <h3 key={`h${blocks.length}`} className="pt-4 text-base font-semibold">
+          {section[1]}
+          <span className="ml-2 text-xs font-normal text-muted-foreground">{section[2]}</span>
+        </h3>,
+      );
+      continue;
+    }
+
+    if (trimmed.startsWith("# ")) {
+      flush();
+      blocks.push(
+        <h2 key={`h${blocks.length}`} className="text-lg font-semibold">
+          {trimmed.slice(2)}
+        </h2>,
+      );
+      continue;
+    }
+
+    paragraph.push(trimmed);
+  }
+
+  flush();
+  return blocks;
+}
+
+/** Жирное начертание — единственная разметка внутри строки, какая у нас бывает. */
+function renderInline(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) =>
+    part.startsWith("**") && part.endsWith("**") ? (
+      <strong key={index}>{part.slice(2, -2)}</strong>
+    ) : (
+      <span key={index}>{part}</span>
+    ),
   );
 }
