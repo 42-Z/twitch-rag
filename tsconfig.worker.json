@@ -8,7 +8,10 @@
     "module": "Preserve",
     "moduleDetection": "force",
     "allowJs": false,
-    "types": ["@cloudflare/workers-types"],
+    // "bun-types/test" — только объявление модуля `bun:test`, без глобальных
+    // Node/DOM-подобных типов из bun-types/globals.d.ts, которые
+    // конфликтовали бы с типами Workers.
+    "types": ["@cloudflare/workers-types", "bun-types/test"],
 
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -26,6 +29,6 @@
     }
   },
 
-  "include": ["src/worker", "src/shared"],
+  "include": ["src/worker", "src/shared", "tests/contract", "tests/unit/schedule-select.test.ts"],
   "exclude": ["dist", "node_modules"]
 }

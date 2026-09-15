@@ -13,6 +13,16 @@ import { createServices } from "./env.ts";
 import { handleHealth } from "./routes/health.ts";
 import { handleMcp } from "./mcp.ts";
 import { knowledgeStats, parseSearchRequest, searchKnowledge } from "./routes/knowledge.ts";
+import { handleIngestReady } from "./routes/internal.ts";
+import {
+  handleAddStream,
+  handleDeleteStream,
+  handleGetDocument,
+  handleSetChannel,
+} from "./routes/streams.ts";
+import { runScheduledCheck } from "./schedule.ts";
+
+export { StreamIngestWorkflow } from "./workflow.ts";
 
 type Handler = (request: Request, env: Env, params: Record<string, string>) => Promise<Response>;
 
@@ -50,7 +60,42 @@ const ROUTES: Route[] = [
       return Response.json(await knowledgeStats(createServices(env)));
     },
   },
+
+  {
+    method: "GET",
+    pattern: "/api/streams/:vodId/document",
+    handler: (_request, env, params) => handleGetDocument(params.vodId ?? "", createServices(env)),
+  },
+
+  {
+    method: "POST",
+    pattern: "/api/streams",
+    handler: (request, env) => handleAddStream(request, env, createServices(env), originOf(request)),
+  },
+
+  {
+    method: "DELETE",
+    pattern: "/api/streams/:vodId",
+    handler: (request, env, params) =>
+      handleDeleteStream(params.vodId ?? "", request, env, createServices(env)),
+  },
+
+  {
+    method: "PUT",
+    pattern: "/api/channel",
+    handler: (request, env) => handleSetChannel(request, env, createServices(env)),
+  },
+
+  {
+    method: "POST",
+    pattern: "/api/internal/ingest-ready",
+    handler: (request, env) => handleIngestReady(request, env),
+  },
 ];
+
+function originOf(request: Request): string {
+  return new URL(request.url).origin;
+}
 
 async function readJson(request: Request): Promise<unknown> {
   try {
@@ -60,7 +105,28 @@ async function readJson(request: Request): Promise<unknown> {
   }
 }
 
+/** Объекты старше суток не могут принадлежать активному разбору — он длится минуты. */
+const STALE_AUDIO_SECONDS = 24 * 60 * 60;
+
+async function cleanupStaleAudio(env: Env): Promise<void> {
+  const cutoff = Date.now() - STALE_AUDIO_SECONDS * 1000;
+  let cursor: string | undefined;
+  do {
+    const listed = await env.AUDIO.list({ prefix: "audio/", ...(cursor === undefined ? {} : { cursor }) });
+    const stale = listed.objects.filter((object) => object.uploaded.getTime() < cutoff).map((object) => object.key);
+    if (stale.length > 0) await env.AUDIO.delete(stale);
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor !== undefined);
+}
+
 export default {
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // На расписании нет входящего запроса, откуда обычно берётся адрес —
+    // он задан переменной окружения (публичный адрес сервиса, не секрет).
+    ctx.waitUntil(runScheduledCheck(env, createServices(env), env.WORKER_URL));
+    ctx.waitUntil(cleanupStaleAudio(env));
+  },
+
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
