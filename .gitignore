@@ -40,3 +40,6 @@ tmp
 *.sqlite-wal
 *.sqlite-shm
 .box
+
+# python-кэш скриптов SpecKit
+__pycache__
