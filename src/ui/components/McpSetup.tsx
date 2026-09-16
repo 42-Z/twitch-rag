@@ -18,8 +18,11 @@ export function McpSetup(): React.JSX.Element {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">Подключить ассистента</h2>
+      {/* Про отсутствие токена сказано прямо: в конфиге поля для него нет, но
+          молчание тут читается как «ключ надо поискать» — и человек идёт его
+          искать. Строка стоит там, где конфиг копируют. */}
       <p className="text-sm text-muted-foreground">
-        Добавьте сервер в настройки MCP своего ИИ-ассистента.
+        Добавьте сервер в настройки MCP своего ИИ-ассистента — токен для него не нужен.
       </p>
       <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 text-xs">
         <code>{config}</code>
