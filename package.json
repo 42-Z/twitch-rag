@@ -1,34 +1,52 @@
 {
-  "name": "bun-react-template",
+  "name": "twitch-rag",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts",
-    "start": "NODE_ENV=production bun src/index.ts",
-    "build": "bun run build.ts"
+    "build": "bun run build.ts",
+    "dev:ui": "bun build --watch src/ui/index.html --outdir dist",
+    "dev:worker": "wrangler dev",
+    "deploy": "bun run build && wrangler deploy",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-slot": "^1.2.3",
+    "@upstash/blob": "^0.0.5",
+    "@upstash/box": "^0.7.5",
+    "@upstash/redis": "^1.38.4",
+    "@upstash/vector": "^1.2.3",
+    "agents": "^0.23.0",
+    "aws4fetch": "^1.0.20",
     "bun-plugin-tailwind": "^0.1.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cn": "^0.3.0",
     "lucide-react": "^1",
     "openai": "^7.15.0",
+    "radix-ui": "^1.6.7",
     "react": "^19",
     "react-dom": "^19",
     "tailwind-merge": "^3.3.1",
-    "tw-animate-css": "^1.4.0"
+    "tw-animate-css": "^1.4.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260915.1",
+    "@types/bun": "latest",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/bun": "latest",
-    "tailwindcss": "^4.1.11"
+    "tailwindcss": "^4.1.11",
+    "wrangler": "^4.131.2"
   },
   "peerDependencies": {
     "typescript": "^7"
-  }
+  },
+  "description": "База знаний по трансляциям Twitch для ИИ-ассистентов"
 }

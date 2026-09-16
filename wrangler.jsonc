@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "twitch-rag",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-15",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Статика раздаётся раньше Worker: страница продолжает открываться,
+  // даже когда суточный лимит вызовов Worker исчерпан.
+  // Логика Worker запускается только на этих путях.
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/mcp"]
+  },
+
+  // Куски аудио на время разбора; живут минуты.
+  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "twitch-audio" }],
+
+  // Разбор записи как последовательность шагов с независимыми повторами.
+  "workflows": [
+    {
+      "name": "stream-ingest",
+      "binding": "INGEST",
+      "class_name": "StreamIngestWorkflow"
+    }
+  ],
+
+  // Ограничение частоты публичных путей встроенным счётчиком Cloudflare:
+  // защита не должна расходовать месячную квоту команд реестра.
+  "ratelimits": [
+    {
+      "name": "PUBLIC_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
+
+  // Раз в час: найти новую запись канала и запустить прогон.
+  "triggers": { "crons": ["0 * * * *"] },
+
+  // Публичный адрес сервиса — не секрет, известен из адресной строки браузера.
+  "vars": { "WORKER_URL": "https://twitch-rag.crbanana.workers.dev" },
+
+  "observability": { "enabled": true }
+}

@@ -1,7 +1,8 @@
 {
+  // Браузер и бокс: интерфейс, прогон в боксе, тесты.
+  // Код Worker проверяется отдельно — tsconfig.worker.json.
   "compilerOptions": {
-    // Environment setup & latest features
-    "lib": ["ESNext", "DOM"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "target": "ESNext",
     "module": "Preserve",
     "moduleDetection": "force",
@@ -9,13 +10,11 @@
     "allowJs": true,
     "types": ["bun", "react"],
 
-    // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
-    // Best practices
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
@@ -26,11 +25,23 @@
       "@/*": ["./src/*"]
     },
 
-    // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
 
-  "exclude": ["dist", "node_modules"]
+  "include": [
+    "src/ui",
+    "src/pipeline",
+    "src/shared",
+    "src/components",
+    "src/lib",
+    "tests/unit",
+    "tests/integration",
+    "build.ts"
+  ],
+  // tests/contract и tests/unit/schedule-select проверяют код Worker и
+  // типизируются вместе с ним (tsconfig.worker.json) — там нет DOM-типов,
+  // конфликтующих с типами Workers.
+  "exclude": ["dist", "node_modules", "tests/contract", "tests/unit/schedule-select.test.ts"]
 }

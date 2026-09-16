@@ -188,7 +188,7 @@ build.ts                        # сборка интерфейса в dist (у�
 | Бакет Upstash Blob | `upstash blob create --name twitch-docs --visibility private` | создать |
 | Бокс Upstash | `box create --no-repl --runtime node`, затем установка ffmpeg и yt-dlp и `box snapshot` | **создан** (`fun-goshawk-88276`), снимок сделан |
 | Бакет R2 | `wrangler r2 bucket create twitch-audio` | создать |
-| Приложение Twitch | console.twitch.tv → регистрация приложения | создать |
+| Приложение Twitch | dev.twitch.tv/console/apps/create → регистрация приложения | создать |
 | Ключ OpenRouter | openrouter.ai | **есть** |
 
 ### И3. Конфигурация Cloudflare
@@ -205,6 +205,44 @@ build.ts                        # сборка интерфейса в dist (у�
 статикой и Workflow. Прогон в боксе разворачивается отдельно: код `pipeline/` собирается
 в один файл и заливается в бокс, снимок обновляется. Автоматическая публикация из GitHub
 через Workers Builds — после того, как ручной путь заработает.
+
+**Заливка прогона в бокс — команды**:
+
+```bash
+bun build src/pipeline/main.ts --target=node --outfile=pipeline.mjs
+```
+
+Расширение `.mjs`, а не `.js`: сборка использует верхнеуровневый `await`, и без него Node
+решал бы модуль как CommonJS в зависимости от `package.json` рабочего каталога бокса.
+`aws4fetch` встраивается в бандл целиком — в боксе не нужно ничего устанавливать сверх
+`yt-dlp` и `ffmpeg`.
+
+```bash
+box --box fun-goshawk-88276 files write /workspace/home/pipeline.mjs - < pipeline.mjs
+box --box fun-goshawk-88276 files write /workspace/home/.env.pipeline - <<'EOF'
+INGEST_SECRET=<значение>
+R2_ACCOUNT_ID=<значение>
+R2_BUCKET=twitch-audio
+R2_ACCESS_KEY_ID=<значение>
+R2_SECRET_ACCESS_KEY=<значение>
+EOF
+box --box fun-goshawk-88276 snapshot
+```
+
+Секреты идут файлом, а не аргументом команды запуска: `box exec` подставляет строку
+команды буквально, и она видна через `ps` внутри бокса. Прогон запускается с
+`node --env-file=/workspace/home/.env.pipeline pipeline.mjs …` (`shared/box.ts`).
+
+**Проверено** (2026-09-15, на боксе `fun-goshawk-88276`): `yt-dlp` из репозитория apt
+оказался версии 2023.03.04 и не разбирал текущую страницу Twitch; заменён на актуальный
+бинарник с `github.com/yt-dlp/yt-dlp/releases/latest`. На реальной записи (`2872271642`)
+`--dump-json` вернул корректные главы (`Minecraft` → `Just Chatting`), формат которых
+совпадает с ожиданиями `pipeline/media.ts`. Конвейер `yt-dlp -f bestaudio | ffmpeg` на
+двухминутном фрагменте той же записи дал ровно один кусок и строку `index.csv` вида
+`chunk_0000.m4a,0.000000,120.064000` — формат совпадает с `pipeline/segment.ts`.
+Собранный `pipeline.mjs` залит и запускается (ошибка на отсутствующих аргументах —
+ожидаемая). Снимок бокса снят после того, как прогон отработал на живой записи целиком:
+`ea40b9cc-4bfb-479f-aa1a-76c89d06d8c8` (2026-09-16, 40 МБ — без остатков прогонов).
 
 ### И5. Первый запуск
 

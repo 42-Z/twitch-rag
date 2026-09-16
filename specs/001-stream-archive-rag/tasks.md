@@ -27,15 +27,15 @@ Worker и сквозную проверку по `quickstart.md`.
 **Цель**: привести шаблон Bun-приложения к структуре из плана и настроить сборку под
 Cloudflare.
 
-- [ ] T001 Установить зависимости в `package.json`: `agents`, `@modelcontextprotocol/sdk`, `@upstash/vector`, `@upstash/redis`, `@upstash/blob`, `@upstash/box`, `zod`, `@aws-sdk/client-s3` (выгрузка кусков в R2 из бокса); в `devDependencies` — `wrangler`, `@cloudflare/workers-types`. `openai` уже установлен (7.15.0)
-- [ ] T002 Удалить шаблонный код: `src/index.ts`, `src/App.tsx`, `src/APITester.tsx`, `src/frontend.tsx`, `src/index.html`, `src/index.css`, `src/logo.svg`, `src/react.svg`. Сохранить `src/components/ui/`, `src/lib/utils.ts`, `styles/globals.css`, `components.json`
-- [ ] T003 Создать дерево каталогов `src/worker/routes/`, `src/pipeline/`, `src/shared/`, `src/ui/components/`, `src/ui/lib/`, `tests/unit/`, `tests/contract/`, `tests/integration/` согласно разделу «Source Code» в plan.md
-- [ ] T004 Создать `wrangler.jsonc`: `main` — `src/worker/index.ts`, привязка бакета R2 `twitch-audio`, привязка Workflow, cron-расписание раз в час, `assets` с каталогом `dist` и порядком обслуживания «статика раньше Worker» (иначе исчерпание лимита превращает страницу в 429)
-- [ ] T005 [P] Настроить `tsconfig.json`: типы `@cloudflare/workers-types` для `src/worker/**` и `src/shared/**`, DOM-типы для `src/ui/**`, `strict: true`, запрет `any` без комментария-обоснования (принцип II конституции)
-- [ ] T006 [P] Создать `.env.example` с девятью значениями из quickstart.md: `OPENROUTER_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `UPSTASH_REDIS_READONLY_TOKEN`, `UPSTASH_BLOB_TOKEN`, `UPSTASH_BOX_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `INGEST_SECRET`, `APP_ADMIN_TOKEN`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
-- [ ] T007 [P] Обновить `build.ts`: точка входа `src/ui/index.html`, вывод в `dist`, подстановка публичных значений `BUN_PUBLIC_REGISTRY_URL` и `BUN_PUBLIC_REGISTRY_READONLY_TOKEN` в сборку интерфейса
-- [ ] T008 [P] Прописать скрипты в `package.json`: `build` (сборка интерфейса), `deploy` (`wrangler deploy`), `dev:worker` (`wrangler dev`), `test` (`bun test`), `typecheck` (`tsc --noEmit`)
-- [ ] T009 [P] Выверить `.gitignore`: `.env`, `.box`, `dist`, `node_modules`, `.wrangler`
+- [X] T001 Установить зависимости в `package.json`: `agents`, `@modelcontextprotocol/sdk`, `@upstash/vector`, `@upstash/redis`, `@upstash/blob`, `@upstash/box`, `zod`, `aws4fetch` (подпись запросов к R2 по протоколу S3 из бокса — 3 КБ вместо мегабайтного AWS SDK); в `devDependencies` — `wrangler`, `@cloudflare/workers-types`. `openai` уже установлен (7.15.0)
+- [X] T002 Удалить шаблонный код: `src/index.ts`, `src/App.tsx`, `src/APITester.tsx`, `src/frontend.tsx`, `src/index.html`, `src/index.css`, `src/logo.svg`, `src/react.svg`. Сохранить `src/components/ui/`, `src/lib/utils.ts`, `styles/globals.css`, `components.json`
+- [X] T003 Создать дерево каталогов `src/worker/routes/`, `src/pipeline/`, `src/shared/`, `src/ui/components/`, `src/ui/lib/`, `tests/unit/`, `tests/contract/`, `tests/integration/` согласно разделу «Source Code» в plan.md
+- [X] T004 Создать `wrangler.jsonc`: `main` — `src/worker/index.ts`, привязка бакета R2 `twitch-audio`, привязка Workflow, cron-расписание раз в час, `assets` с каталогом `dist` и порядком обслуживания «статика раньше Worker» (иначе исчерпание лимита превращает страницу в 429)
+- [X] T005 [P] Настроить `tsconfig.json`: типы `@cloudflare/workers-types` для `src/worker/**` и `src/shared/**`, DOM-типы для `src/ui/**`, `strict: true`, запрет `any` без комментария-обоснования (принцип II конституции)
+- [X] T006 [P] Создать `.env.example` с девятью значениями из quickstart.md: `OPENROUTER_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `UPSTASH_REDIS_READONLY_TOKEN`, `UPSTASH_BLOB_TOKEN`, `UPSTASH_BOX_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `INGEST_SECRET`, `APP_ADMIN_TOKEN`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
+- [X] T007 [P] Обновить `build.ts`: точка входа `src/ui/index.html`, вывод в `dist`, подстановка публичных значений `BUN_PUBLIC_REGISTRY_URL` и `BUN_PUBLIC_REGISTRY_READONLY_TOKEN` в сборку интерфейса
+- [X] T008 [P] Прописать скрипты в `package.json`: `build` (сборка интерфейса), `deploy` (`wrangler deploy`), `dev:worker` (`wrangler dev`), `test` (`bun test`), `typecheck` (`tsc --noEmit`)
+- [X] T009 [P] Выверить `.gitignore`: `.env`, `.box`, `dist`, `node_modules`, `.wrangler`
 
 **Контрольная точка**: `bun install` и `bun run typecheck` проходят, шаблонного кода не осталось.
 
@@ -50,30 +50,30 @@ Cloudflare.
 
 ### Внешние ресурсы (раздел И2 плана)
 
-- [ ] T010 [P] Создать базу реестра: `upstash redis create --name twitch-rag --region eu-west-1`; получить полный и read-only токены (скилл `upstash:upstash-cli`)
-- [ ] T011 [P] Создать бакет документов: `upstash blob create --name twitch-docs --visibility private`
-- [ ] T012 [P] Создать бакет аудио: `wrangler r2 bucket create twitch-audio`
-- [ ] T013 Создать в панели R2 токен доступа к API S3 (чтение и запись в `twitch-audio`) — бокс выгружает куски снаружи Cloudflare и привязкой пользоваться не может; ключ и секрет идут в переменные бокса
-- [ ] T014 [P] Зарегистрировать приложение на console.twitch.tv, получить `TWITCH_CLIENT_ID` и `TWITCH_CLIENT_SECRET`
-- [ ] T015 Заполнить локальный `.env` по `.env.example` и установить секреты на сервере: `wrangler secret put` для `OPENROUTER_API_KEY`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_TOKEN`, `UPSTASH_BLOB_TOKEN`, `UPSTASH_BOX_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `INGEST_SECRET`, `APP_ADMIN_TOKEN`
+- [X] T010 [P] Создать базу реестра: `upstash redis create --name twitch-rag --region eu-west-1`; получить полный и read-only токены (скилл `upstash:upstash-cli`)
+- [X] T011 [P] Создать бакет документов: `upstash blob create --name twitch-docs --visibility private`
+- [X] T012 [P] Создать бакет аудио: `wrangler r2 bucket create twitch-audio`
+- [X] T013 Создать в панели R2 токен доступа к API S3 (чтение и запись в `twitch-audio`) — бокс выгружает куски снаружи Cloudflare и привязкой пользоваться не может; ключ и секрет идут в переменные бокса
+- [X] T014 [P] Зарегистрировать приложение на dev.twitch.tv/console/apps/create, получить `TWITCH_CLIENT_ID` и `TWITCH_CLIENT_SECRET`
+- [X] T015 Заполнить локальный `.env` по `.env.example` и установить секреты на сервере: `wrangler secret put` для `OPENROUTER_API_KEY`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_TOKEN`, `UPSTASH_BLOB_TOKEN`, `UPSTASH_BOX_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `INGEST_SECRET`, `APP_ADMIN_TOKEN`
 
 ### Общий слой
 
-- [ ] T016 [P] Описать привязки и секреты Worker как типы в `src/worker/env.ts`: бакет R2, Workflow, все секреты из T015 — без `any`
-- [ ] T017 [P] Реализовать `src/shared/errors.ts`: коды `invalid_input`, `not_found`, `vod_unavailable`, `channel_not_set`, `already_processed`, `upstream_unavailable`, `rate_limited`, `internal`; формат ответа `{ error: { code, message, hint } }` с человеческим текстом на русском (контракт knowledge-api.md, принцип III)
-- [ ] T018 [P] Реализовать `src/shared/time.ts`: разбор длительности Twitch (`7h12m35s`), перевод секунд в ссылку `?t=1h2m3s`, прибавление смещения куска к меткам сегментов
-- [ ] T019 [P] Реализовать `src/shared/twitch.ts`: получение app-токена с кэшем в ключе `twitch:token` (TTL из ответа за вычетом запаса), `Get Videos` с `type=archive`, чтение `muted_segments`, определение записи «только для подписчиков»
-- [ ] T020 [P] Реализовать `src/shared/openrouter.ts`: клиент официального SDK OpenAI с `baseURL: "https://openrouter.ai/api/v1"`; три функции — распознавание (`openai/whisper-large-v3-turbo`, `response_format: "verbose_json"`, `timestamp_granularities: ["segment"]`), составление документа (`inclusionai/ling-3.0-flash`), эмбеддинги (`openai/text-embedding-3-small`, 1536 измерений). Ключ не попадает в браузер
-- [ ] T021 Реализовать `src/shared/registry.ts` по разделу 1 data-model.md: hash `channel` (`twitchUserId`, `login`, `displayName`, `watchFrom`, `addedAt`, `lastCheckedAt`, `lastCheckError`), hash `stream:<vodId>` со всеми полями и состояниями `processing | ready | skipped | failed`, sorted set `streams:index` (вес — `publishedAtUnix`). Инвариант: `stream:*` и `streams:index` меняются одной транзакцией
-- [ ] T022 [P] Реализовать `src/shared/documents.ts`: запись и чтение `streams/<vodId>.md` в приватном бакете Upstash Blob; документ пишется один раз целиком
-- [ ] T023 [P] Реализовать `src/shared/knowledge.ts`: запись кусков в Upstash Vector с идентификатором `<vodId>:<sectionIndex>:<chunkIndex>`, метаданными из раздела 3 data-model.md (включая `sectionText` — текст раздела целиком), поиск с фильтрами по `publishedAtUnix` и `category`, удаление по префиксу `<vodId>:`
-- [ ] T024 [P] Реализовать `src/shared/sections.ts`: разбор размеченного текста документа на разделы по строке заголовка вида `## Тема [1:12:30 — 1:18:40 · Категория]`; нарезка раздела на куски 1500–3000 знаков с перекрытием 200 знаков, раздел короче — целиком; ограничение раздела 6000 знаков (лимит метаданных 48 КБ); контекстная строка в начале куска — дата эфира, категория, тема раздела
-- [ ] T025 [P] Реализовать `src/shared/categories.ts`: сопоставление раздела с главой записи по времени начала — каждый раздел получает категорию, действовавшую в его момент (FR-014)
-- [ ] T026 Реализовать `src/worker/index.ts`: обработчики `fetch` и `scheduled`, маршрутизация по путям контракта, отдача статики раньше логики Worker, единый формат ошибок из `errors.ts`
-- [ ] T027 Реализовать `src/worker/ratelimit.ts`: ограничение частоты по адресу отправителя для публичных путей, ответ 429 с кодом `rate_limited` и заголовком `Retry-After` (FR-028)
-- [ ] T028 Реализовать `src/worker/routes/health.ts` — `GET /api/health`: проверки `redis`, `vector`, `blob`, `r2`, `openrouter`, `twitch`, `box`; `status` становится `degraded`, если хоть одна не `ok` (контракт knowledge-api.md)
-- [ ] T029 [P] Модульные тесты чистой логики времени в `tests/unit/time.test.ts`: разбор длительности Twitch, формат `?t=1h2m3s`, сдвиг меток по смещению куска
-- [ ] T030 [P] Модульные тесты разбиения в `tests/unit/sections.test.ts`: разбор заголовков разделов, границы кусков 1500–3000 знаков, перекрытие 200, обрезка раздела по 6000 знаков
+- [X] T016 [P] Описать привязки и секреты Worker как типы в `src/worker/env.ts`: бакет R2, Workflow, все секреты из T015 — без `any`
+- [X] T017 [P] Реализовать `src/shared/errors.ts`: коды `invalid_input`, `not_found`, `vod_unavailable`, `channel_not_set`, `already_processed`, `upstream_unavailable`, `rate_limited`, `internal`; формат ответа `{ error: { code, message, hint } }` с человеческим текстом на русском (контракт knowledge-api.md, принцип III)
+- [X] T018 [P] Реализовать `src/shared/time.ts`: разбор длительности Twitch (`7h12m35s`), перевод секунд в ссылку `?t=1h2m3s`, прибавление смещения куска к меткам сегментов
+- [X] T019 [P] Реализовать `src/shared/twitch.ts`: получение app-токена с кэшем в ключе `twitch:token` (TTL из ответа за вычетом запаса), `Get Videos` с `type=archive`, чтение `muted_segments`, определение записи «только для подписчиков»
+- [X] T020 [P] Реализовать `src/shared/openrouter.ts`: клиент официального SDK OpenAI с `baseURL: "https://openrouter.ai/api/v1"`; три функции — распознавание (`openai/whisper-large-v3-turbo`, `response_format: "verbose_json"`, `timestamp_granularities: ["segment"]`), составление документа (`inclusionai/ling-3.0-flash`), эмбеддинги (`openai/text-embedding-3-small`, 1536 измерений). Ключ не попадает в браузер
+- [X] T021 Реализовать `src/shared/registry.ts` по разделу 1 data-model.md: hash `channel` (`twitchUserId`, `login`, `displayName`, `watchFrom`, `addedAt`, `lastCheckedAt`, `lastCheckError`), hash `stream:<vodId>` со всеми полями и состояниями `processing | ready | skipped | failed`, sorted set `streams:index` (вес — `publishedAtUnix`). Инвариант: `stream:*` и `streams:index` меняются одной транзакцией
+- [X] T022 [P] Реализовать `src/shared/documents.ts`: запись и чтение `streams/<vodId>.md` в приватном бакете Upstash Blob; документ пишется один раз целиком
+- [X] T023 [P] Реализовать `src/shared/knowledge.ts`: запись кусков в Upstash Vector с идентификатором `<vodId>:<sectionIndex>:<chunkIndex>`, метаданными из раздела 3 data-model.md (включая `sectionText` — текст раздела целиком), поиск с фильтрами по `publishedAtUnix` и `category`, удаление по префиксу `<vodId>:`
+- [X] T024 [P] Реализовать `src/shared/sections.ts`: разбор размеченного текста документа на разделы по строке заголовка вида `## Тема [1:12:30 — 1:18:40 · Категория]`; нарезка раздела на куски 1500–3000 знаков с перекрытием 200 знаков, раздел короче — целиком; ограничение раздела 6000 знаков (лимит метаданных 48 КБ); контекстная строка в начале куска — дата эфира, категория, тема раздела
+- [X] T025 [P] Реализовать `src/shared/categories.ts`: сопоставление раздела с главой записи по времени начала — каждый раздел получает категорию, действовавшую в его момент (FR-014)
+- [X] T026 Реализовать `src/worker/index.ts`: обработчики `fetch` и `scheduled`, маршрутизация по путям контракта, отдача статики раньше логики Worker, единый формат ошибок из `errors.ts`
+- [X] T027 Реализовать `src/worker/ratelimit.ts`: ограничение частоты по адресу отправителя для публичных путей, ответ 429 с кодом `rate_limited` и заголовком `Retry-After` (FR-028)
+- [X] T028 Реализовать `src/worker/routes/health.ts` — `GET /api/health`: проверки `redis`, `vector`, `blob`, `r2`, `openrouter`, `twitch`, `box`; `status` становится `degraded`, если хоть одна не `ok` (контракт knowledge-api.md)
+- [X] T029 [P] Модульные тесты чистой логики времени в `tests/unit/time.test.ts`: разбор длительности Twitch, формат `?t=1h2m3s`, сдвиг меток по смещению куска
+- [X] T030 [P] Модульные тесты разбиения в `tests/unit/sections.test.ts`: разбор заголовков разделов, границы кусков 1500–3000 знаков, перекрытие 200, обрезка раздела по 6000 знаков
 
 **Контрольная точка**: `wrangler dev` поднимается, `/api/health` отвечает `ok` по всем проверкам, ключ OpenRouter, убранный из секретов, даёт `degraded` с понятным текстом.
 
@@ -92,32 +92,32 @@ Cloudflare.
 
 ### Прогон в боксе
 
-- [ ] T031 [P] [US1] Реализовать `src/pipeline/media.ts`: `yt-dlp --dump-json` для метаданных и глав записи (категории с временными границами), определение недоступности — удалена или только для подписчиков
-- [ ] T032 [P] [US1] Реализовать `src/pipeline/segment.ts`: конвейер `yt-dlp -f bestaudio` → `ffmpeg -c:a aac -b:a 32k -ac 1 -ar 16000 -f segment -segment_time 600 -segment_list index.csv -segment_list_type csv`, перекрытие 5 секунд между кусками, чтение `index.csv` в список `{index, key, offsetSeconds, durationSeconds}`
-- [ ] T033 [US1] Реализовать `src/pipeline/publish.ts`: выгрузка кусков в R2 по пути `audio/<vodId>/chunk-<NNNN>.m4a` и `audio/<vodId>/index.csv` через S3-совместимый доступ, затем вызов `POST /api/internal/ingest-ready` с секретом `X-Ingest-Secret`; все обращения с повторами (API бокса нестабилен — 2 отказа из 7 в замерах)
-- [ ] T034 [US1] Реализовать `src/pipeline/main.ts`: точка входа прогона — принять `vodId` и адрес Worker, пройти media → segment → publish, при недоступности записи отправить вызов отказа `{ failed: true, code, message }`, при любом исходе убрать за собой временные файлы
-- [ ] T035 [US1] Собрать `pipeline/` в один файл и залить в бокс `fun-goshawk-88276`, обновить снимок; задокументировать шаг в plan.md, раздел И4 (скилл `upstash:upstash-box-cli`)
+- [X] T031 [P] [US1] Реализовать `src/pipeline/media.ts`: `yt-dlp --dump-json` для метаданных и глав записи (категории с временными границами), определение недоступности — удалена или только для подписчиков
+- [X] T032 [P] [US1] Реализовать `src/pipeline/segment.ts`: конвейер `yt-dlp -f bestaudio` → `ffmpeg -c:a aac -b:a 32k -ac 1 -ar 16000 -f segment -segment_time 600 -segment_list index.csv -segment_list_type csv`, перекрытие 5 секунд между кусками, чтение `index.csv` в список `{index, key, offsetSeconds, durationSeconds}`
+- [X] T033 [US1] Реализовать `src/pipeline/publish.ts`: выгрузка кусков в R2 по пути `audio/<vodId>/chunk-<NNNN>.m4a` и `audio/<vodId>/index.csv` через S3-совместимый доступ, затем вызов `POST /api/internal/ingest-ready` с секретом `X-Ingest-Secret`; все обращения с повторами (API бокса нестабилен — 2 отказа из 7 в замерах)
+- [X] T034 [US1] Реализовать `src/pipeline/main.ts`: точка входа прогона — принять `vodId` и адрес Worker, пройти media → segment → publish, при недоступности записи отправить вызов отказа `{ failed: true, code, message }`, при любом исходе убрать за собой временные файлы
+- [X] T035 [US1] Собрать `pipeline/` в один файл и залить в бокс `fun-goshawk-88276`, обновить снимок; задокументировать шаг в plan.md, раздел И4 (скилл `upstash:upstash-box-cli`)
 
 ### Обработка в Worker
 
-- [ ] T036 [US1] Реализовать `src/worker/routes/internal.ts` — `POST /api/internal/ingest-ready`: проверка общего секрета, создание инстанса Workflow, ответ 202 с идентификатором; повторный вызов для записи в обработке отвечает 200 и нового инстанса не создаёт; вызов с `failed: true` помечает запись `skipped` с причиной
-- [ ] T037 [US1] Реализовать шаг распознавания в `src/worker/workflow.ts`: по куску из R2 — вызов распознавания, прибавление `offsetSeconds` к меткам сегментов, удаление куска из R2 сразу после успеха. Результат шага не превышает 1 МиБ
-- [ ] T038 [US1] Реализовать шаг составления документа в `src/worker/workflow.ts`: несколько проходов, в каждом модель получает расшифровку целиком и пишет только свой участок; границы участков выравниваются по сменам категории; выход — размеченный текст с заголовками разделов (FR-012, FR-013)
-- [ ] T039 [US1] Реализовать проверки документа в `src/worker/workflow.ts`: длинные разделы дорезаются с перекрытием, слишком короткие склеиваются с соседними, сумма разделов сверяется с длительностью эфира — разрыв во времени означает пропущенный кусок и отправляется на переработку (FR-019); участки без внятной речи разделов не дают (FR-017)
-- [ ] T040 [US1] Реализовать шаг индексации в `src/worker/workflow.ts`: разбиение разделов на куски (`sections.ts`), простановка категорий (`categories.ts`), эмбеддинги, запись в векторную базу, сохранение документа в Blob, выставление `status = ready` последним действием — только после того, как документ сохранён и куски записаны (FR-005)
-- [ ] T041 [US1] Реализовать уборку в `src/worker/workflow.ts`: при любом завершении разбора — успехе, отказе, отмене — удаление по префиксу `audio/<vodId>/`; расшифровка не сохраняется нигде (FR-010)
-- [ ] T042 [US1] Реализовать в `src/worker/routes/streams.ts` — `POST /api/streams` с токеном владельца: приём `{ url }` или `{ vodId }`, проверка по реестру (`already_processed`), запись состояния `processing`, запуск прогона в боксе, ответ 202 (FR-004)
+- [X] T036 [US1] Реализовать `src/worker/routes/internal.ts` — `POST /api/internal/ingest-ready`: проверка общего секрета, создание инстанса Workflow, ответ 202 с идентификатором; повторный вызов для записи в обработке отвечает 200 и нового инстанса не создаёт; вызов с `failed: true` помечает запись `skipped` с причиной
+- [X] T037 [US1] Реализовать шаг распознавания в `src/worker/workflow.ts`: по куску из R2 — вызов распознавания, прибавление `offsetSeconds` к меткам сегментов, удаление куска из R2 сразу после успеха. Результат шага не превышает 1 МиБ
+- [X] T038 [US1] Реализовать шаг составления документа в `src/worker/workflow.ts`: несколько проходов, в каждом модель получает расшифровку целиком и пишет только свой участок; границы участков выравниваются по сменам категории; выход — размеченный текст с заголовками разделов (FR-012, FR-013)
+- [X] T039 [US1] Реализовать проверки документа в `src/worker/workflow.ts`: длинные разделы дорезаются с перекрытием, слишком короткие склеиваются с соседними, сумма разделов сверяется с длительностью эфира — разрыв во времени означает пропущенный кусок и отправляется на переработку (FR-019); участки без внятной речи разделов не дают (FR-017)
+- [X] T040 [US1] Реализовать шаг индексации в `src/worker/workflow.ts`: разбиение разделов на куски (`sections.ts`), простановка категорий (`categories.ts`), эмбеддинги, запись в векторную базу, сохранение документа в Blob, выставление `status = ready` последним действием — только после того, как документ сохранён и куски записаны (FR-005)
+- [X] T041 [US1] Реализовать уборку в `src/worker/workflow.ts`: при любом завершении разбора — успехе, отказе, отмене — удаление по префиксу `audio/<vodId>/`; расшифровка не сохраняется нигде (FR-010)
+- [X] T042 [US1] Реализовать в `src/worker/routes/streams.ts` — `POST /api/streams` с токеном владельца: приём `{ url }` или `{ vodId }`, проверка по реестру (`already_processed`), запись состояния `processing`, запуск прогона в боксе, ответ 202 (FR-004)
 
 ### Выдача знаний
 
-- [ ] T043 [US1] Реализовать `src/worker/routes/knowledge.ts` — `POST /api/knowledge/search`: валидация `query` (1–1000 знаков после обрезки пробелов), `topK` (1–20, по умолчанию 5), `minScore` (0..1, по умолчанию 0.35), `from`/`to` (`YYYY-MM-DD`), `category`; эмбеддинг запроса, поиск, схлопывание дубликатов по разделу с лучшей оценкой, возврат `sectionText` целиком (FR-022), сортировка по убыванию `score`
-- [ ] T044 [US1] Реализовать в `src/worker/routes/knowledge.ts` ответ при отсутствии знаний: 200, `{ found: false, documents: [], message: "В базе знаний нет сведений по этому вопросу." }` — не ошибка (FR-024)
-- [ ] T045 [US1] Реализовать `GET /api/knowledge/stats` в `src/worker/routes/knowledge.ts`: канал, число разобранных и пропущенных записей, число разделов, покрытие по датам, список категорий, `lastIndexedAt`
-- [ ] T046 [US1] Реализовать `src/worker/mcp.ts`: `createMcpHandler` из `agents/mcp/server`, stateless Streamable HTTP на `/mcp`, без авторизации (FR-027); имя сервера `twitch-knowledge`, версия из манифеста проекта
-- [ ] T047 [US1] Добавить в `src/worker/mcp.ts` инструмент `search_knowledge` с параметрами `query`, `topK` (1–20, по умолчанию 5), `from`/`to`, `category`; описание для модели и формат блока результата — по contracts/mcp-server.md; `structuredContent` совпадает с ответом HTTP API
-- [ ] T048 [P] [US1] Добавить в `src/worker/mcp.ts` инструменты `knowledge_stats` (без параметров) и `list_streams` (`from`/`to`, `limit` 1–50, по умолчанию 20, данные из реестра без векторного поиска); оба только читают
-- [ ] T049 [P] [US1] Контрактный тест `tests/contract/knowledge-search.test.ts`: формы запроса и ответа, пустой результат как 200, отклонение `query` длиной 10 000 знаков кодом `invalid_input`, соблюдение `topK` и фильтров
-- [ ] T050 [P] [US1] Интеграционный тест `tests/integration/pipeline.test.ts` на двухминутном фрагменте записи: путь от кусков аудио до раздела, находимого поиском; проверка, что расшифровка нигде не сохранена и R2 пуст после разбора
+- [X] T043 [US1] Реализовать `src/worker/routes/knowledge.ts` — `POST /api/knowledge/search`: валидация `query` (1–1000 знаков после обрезки пробелов), `topK` (1–20, по умолчанию 5), `minScore` (0..1, по умолчанию 0.65), `from`/`to` (`YYYY-MM-DD`), `category`; эмбеддинг запроса, поиск, схлопывание дубликатов по разделу с лучшей оценкой, возврат `sectionText` целиком (FR-022), сортировка по убыванию `score`
+- [X] T044 [US1] Реализовать в `src/worker/routes/knowledge.ts` ответ при отсутствии знаний: 200, `{ found: false, documents: [], message: "В базе знаний нет сведений по этому вопросу." }` — не ошибка (FR-024)
+- [X] T045 [US1] Реализовать `GET /api/knowledge/stats` в `src/worker/routes/knowledge.ts`: канал, число разобранных и пропущенных записей, число разделов, покрытие по датам, список категорий, `lastIndexedAt`
+- [X] T046 [US1] Реализовать `src/worker/mcp.ts`: `createMcpHandler` из `agents/mcp/server`, stateless Streamable HTTP на `/mcp`, без авторизации (FR-027); имя сервера `twitch-knowledge`, версия из манифеста проекта
+- [X] T047 [US1] Добавить в `src/worker/mcp.ts` инструмент `search_knowledge` с параметрами `query`, `topK` (1–20, по умолчанию 5), `from`/`to`, `category`; описание для модели и формат блока результата — по contracts/mcp-server.md; `structuredContent` совпадает с ответом HTTP API
+- [X] T048 [P] [US1] Добавить в `src/worker/mcp.ts` инструменты `knowledge_stats` (без параметров) и `list_streams` (`from`/`to`, `limit` 1–50, по умолчанию 20, данные из реестра без векторного поиска); оба только читают
+- [X] T049 [P] [US1] Контрактный тест `tests/contract/knowledge-search.test.ts`: формы запроса и ответа, пустой результат как 200, отклонение `query` длиной 10 000 знаков кодом `invalid_input`, соблюдение `topK` и фильтров
+- [X] T050 [P] [US1] Интеграционный тест `tests/integration/pipeline.test.ts` на двухминутном фрагменте записи: путь от кусков аудио до раздела, находимого поиском; проверка, что расшифровка нигде не сохранена и R2 пуст после разбора
 
 **Контрольная точка**: MVP готов — одна запись разобрана, ассистент подключается по `/mcp` и получает знания.
 
@@ -131,14 +131,14 @@ Cloudflare.
 и убедиться, что запись берётся в работу сама, второй запуск расписания ничего не
 дублирует, а запись для подписчиков помечается пропущенной (проверка 3 в quickstart.md).
 
-- [ ] T051 [US2] Добавить маршрут настройки канала `PUT /api/channel` в `src/worker/routes/streams.ts` (токен владельца): поиск канала по логину через Helix, запись hash `channel` с `watchFrom` — моментом подключения. Дописать маршрут в `specs/001-stream-archive-rag/contracts/knowledge-api.md`, где он сейчас отсутствует
-- [ ] T052 [US2] Реализовать `src/worker/schedule.ts`: раз в час — получить список записей канала, вычесть по реестру разобранные и пропущенные, взять самую раннюю необработанную и запустить прогон; за один запуск берётся одна запись, чтобы не съедать квоту процессорного времени бокса
-- [ ] T053 [US2] Реализовать в `src/worker/schedule.ts` отбор по `watchFrom`: автоматически берутся только записи, появившиеся после подключения канала; прошлые — только по явному добавлению владельцем (FR-003)
-- [ ] T054 [US2] Реализовать в `src/shared/registry.ts` учёт попыток: `status = failed` берётся снова на следующем опросе, пока `attempts` не достигнет трёх, после чего переходит в `skipped` с описанием причины
-- [ ] T055 [US2] Реализовать в `src/worker/schedule.ts` подбор брошенных разборов: запись в `processing` дольше суток считается брошенной и берётся заново (FR-034)
-- [ ] T056 [US2] Записывать в `src/worker/schedule.ts` результат опроса канала в `lastCheckedAt` и `lastCheckError`; отсутствие новых записей — не ошибка
-- [ ] T057 [US2] Реализовать ежесуточную уборку R2 в `src/worker/index.ts`: удаление объектов `audio/` старше суток — активный разбор длится минуты, такие объекты принадлежать ему не могут
-- [ ] T058 [P] [US2] Модульный тест `tests/unit/schedule-select.test.ts`: отбор записи к разбору — дедупликация по реестру, отсечение по `watchFrom`, пропуск `skipped`, возврат брошенных `processing`
+- [X] T051 [US2] Добавить маршрут настройки канала `PUT /api/channel` в `src/worker/routes/streams.ts` (токен владельца): поиск канала по логину через Helix, запись hash `channel` с `watchFrom` — моментом подключения. Дописать маршрут в `specs/001-stream-archive-rag/contracts/knowledge-api.md`, где он сейчас отсутствует
+- [X] T052 [US2] Реализовать `src/worker/schedule.ts`: раз в час — получить список записей канала, вычесть по реестру разобранные и пропущенные, взять самую раннюю необработанную и запустить прогон; за один запуск берётся одна запись, чтобы не съедать квоту процессорного времени бокса
+- [X] T053 [US2] Реализовать в `src/worker/schedule.ts` отбор по `watchFrom`: автоматически берутся только записи, появившиеся после подключения канала; прошлые — только по явному добавлению владельцем (FR-003)
+- [X] T054 [US2] Реализовать в `src/shared/registry.ts` учёт попыток: `status = failed` берётся снова на следующем опросе, пока `attempts` не достигнет трёх, после чего переходит в `skipped` с описанием причины
+- [X] T055 [US2] Реализовать в `src/worker/schedule.ts` подбор брошенных разборов: запись в `processing` дольше суток считается брошенной и берётся заново (FR-034)
+- [X] T056 [US2] Записывать в `src/worker/schedule.ts` результат опроса канала в `lastCheckedAt` и `lastCheckError`; отсутствие новых записей — не ошибка
+- [X] T057 [US2] Реализовать ежесуточную уборку R2 в `src/worker/index.ts`: удаление объектов `audio/` старше суток — активный разбор длится минуты, такие объекты принадлежать ему не могут
+- [X] T058 [P] [US2] Модульный тест `tests/unit/schedule-select.test.ts`: отбор записи к разбору — дедупликация по реестру, отсечение по `watchFrom`, пропуск `skipped`, возврат брошенных `processing`
 
 **Контрольная точка**: US1 и US2 работают вместе — база растёт сама, дубликатов нет.
 
@@ -152,14 +152,14 @@ Cloudflare.
 трансляций соответствует действительности, документ открывается и читается, инструкция
 позволяет подключить ассистента (проверка 4 в quickstart.md).
 
-- [ ] T059 [US3] Реализовать `GET /api/streams/:vodId/document` в `src/worker/routes/streams.ts`: отдача документа из приватного бакета как `text/markdown` с кэшированием — документ неизменен после создания (FR-031)
-- [ ] T060 [P] [US3] Реализовать `src/ui/lib/registry.ts`: чтение `streams:index` и `stream:*` напрямую из браузера read-only токеном, минуя Worker; адрес и токен берутся из `BUN_PUBLIC_*`
-- [ ] T061 [P] [US3] Создать `src/ui/index.html` и `src/ui/main.tsx`: точка входа React 19, подключение `styles/globals.css`
-- [ ] T062 [US3] Реализовать `src/ui/components/StreamList.tsx` на компонентах `src/components/ui/`: список разобранных трансляций с названием, датой, категориями и числом разделов (FR-029) и отдельный список пропущенных с причинами (FR-030); состояния загрузки, пустоты и ошибки — видимые и объясняющие себя (принцип III)
-- [ ] T063 [P] [US3] Реализовать `src/ui/components/DocumentView.tsx`: чтение документа трансляции целиком по клику, без смещения разметки после загрузки
-- [ ] T064 [P] [US3] Реализовать `src/ui/components/McpSetup.tsx`: готовый к копированию блок настройки с фактическим адресом сервиса — `{"mcpServers":{"twitch-knowledge":{"type":"http","url":"https://<адрес>/mcp"}}}` (FR-032)
-- [ ] T065 [US3] Реализовать `src/ui/App.tsx`: компоновка трёх блоков, форма указания канала (`PUT /api/channel`), показ состояния из `/api/health`, работа с клавиатуры и фокусом на всех интерактивных элементах
-- [ ] T066 [P] [US3] Проверить сборку интерфейса: `bun run build` кладёт статику в `dist`, размер файлов в пределах ограничений статики Cloudflare, ключей в сборке нет — только публичные значения
+- [X] T059 [US3] Реализовать `GET /api/streams/:vodId/document` в `src/worker/routes/streams.ts`: отдача документа из приватного бакета как `text/markdown` с кэшированием — документ неизменен после создания (FR-031)
+- [X] T060 [P] [US3] Реализовать `src/ui/lib/registry.ts`: чтение `streams:index` и `stream:*` напрямую из браузера read-only токеном, минуя Worker; адрес и токен берутся из `BUN_PUBLIC_*`
+- [X] T061 [P] [US3] Создать `src/ui/index.html` и `src/ui/main.tsx`: точка входа React 19, подключение `styles/globals.css`
+- [X] T062 [US3] Реализовать `src/ui/components/StreamList.tsx` на компонентах `src/components/ui/`: список разобранных трансляций с названием, датой, категориями и числом разделов (FR-029) и отдельный список пропущенных с причинами (FR-030); состояния загрузки, пустоты и ошибки — видимые и объясняющие себя (принцип III)
+- [X] T063 [P] [US3] Реализовать `src/ui/components/DocumentView.tsx`: чтение документа трансляции целиком по клику, без смещения разметки после загрузки
+- [X] T064 [P] [US3] Реализовать `src/ui/components/McpSetup.tsx`: готовый к копированию блок настройки с фактическим адресом сервиса — `{"mcpServers":{"twitch-knowledge":{"type":"http","url":"https://<адрес>/mcp"}}}` (FR-032)
+- [X] T065 [US3] Реализовать `src/ui/App.tsx`: компоновка трёх блоков, форма указания канала (`PUT /api/channel`), показ состояния из `/api/health`, работа с клавиатуры и фокусом на всех интерактивных элементах
+- [X] T066 [P] [US3] Проверить сборку интерфейса: `bun run build` кладёт статику в `dist`, размер файлов в пределах ограничений статики Cloudflare, ключей в сборке нет — только публичные значения
 
 **Контрольная точка**: все три истории работают независимо; владелец видит базу и подключает ассистента.
 
@@ -173,9 +173,9 @@ Cloudflare.
 перестают приходить в ответах, документ исчезает из списка, другие трансляции не
 затронуты (проверка 9 в quickstart.md).
 
-- [ ] T067 [US4] Реализовать `DELETE /api/streams/:vodId` в `src/worker/routes/streams.ts` (токен владельца): удаление разделов из векторной базы по префиксу `<vodId>:`, документа из Blob, записи из `stream:*` и `streams:index`; ответ `{ vodId, deletedChunks }` (FR-033)
-- [ ] T068 [P] [US4] Добавить удаление трансляции в `src/ui/components/StreamList.tsx` с подтверждением и понятным сообщением о результате
-- [ ] T069 [P] [US4] Контрактный тест `tests/contract/streams.test.ts`: ручное добавление (202, `already_processed` для разобранной), удаление (состав ответа, отсутствие влияния на соседние записи), отказ без токена владельца
+- [X] T067 [US4] Реализовать `DELETE /api/streams/:vodId` в `src/worker/routes/streams.ts` (токен владельца): удаление разделов из векторной базы по префиксу `<vodId>:`, документа из Blob, записи из `stream:*` и `streams:index`; ответ `{ vodId, deletedChunks }` (FR-033)
+- [X] T068 [P] [US4] Добавить удаление трансляции в `src/ui/components/StreamList.tsx` с подтверждением и понятным сообщением о результате
+- [X] T069 [P] [US4] Контрактный тест `tests/contract/streams.test.ts`: ручное добавление (202, `already_processed` для разобранной), удаление (состав ответа, отсутствие влияния на соседние записи), отказ без токена владельца
 
 **Контрольная точка**: все пользовательские истории закрыты.
 
@@ -183,14 +183,14 @@ Cloudflare.
 
 ## Phase 7: Отделка и сквозные задачи
 
-- [ ] T070 Замерить процессорное время шага Workflow при прогоне кусков аудио через Worker на первом реальном разборе (открытый риск из research.md, раздел 13) и записать результат в `specs/001-stream-archive-rag/research.md`
-- [ ] T071 [P] Проверить ограничение частоты по проверке 6 quickstart.md: серия из 60 запросов даёт 429 с `Retry-After`, запрос с другого адреса в это же время обслуживается, статика продолжает отдаваться
-- [ ] T072 [P] Проверить параллельность по проверке 7 quickstart.md: во время разбора медиана ответа на запрос знаний меньше секунды, время ответа не растёт более чем вдвое (SC-002, SC-007)
-- [ ] T073 [P] Проверить качество выдачи по проверке 2 quickstart.md: 20 разделов без утверждений, которых нет в записи, расхождение таймкода не более 10 секунд, раздел понятен без просмотра записи (SC-003, SC-004)
-- [ ] T074 Переписать `README.md` под проект: что за сервис, как развернуть, как подключить ассистента; удалить содержимое шаблона Bun
-- [ ] T075 Создать репозиторий на GitHub через `gh repo create` и запушить; убедиться, что `.env` и `.box` в него не попали (раздел И1 плана)
-- [ ] T076 Выполнить первый запуск по разделу И5 плана: `bun run build` → `wrangler deploy` → указать канал → добавить запись вручную → дождаться документа → подключить ассистента
-- [ ] T077 [P] Прогнать финальные проверки: `bun test`, `bun run typecheck`, `wrangler deploy --dry-run`; убедиться, что предупреждений и мёртвого кода не осталось (принцип IV)
+- [X] T070 Замерить процессорное время шага Workflow при прогоне кусков аудио через Worker на первом реальном разборе (открытый риск из research.md, раздел 13) и записать результат в `specs/001-stream-archive-rag/research.md`
+- [X] T071 [P] Проверить ограничение частоты по проверке 6 quickstart.md: серия из 60 запросов даёт 429 с `Retry-After`, запрос с другого адреса в это же время обслуживается, статика продолжает отдаваться
+- [X] T072 [P] Проверить параллельность по проверке 7 quickstart.md: во время разбора медиана ответа на запрос знаний меньше секунды, время ответа не растёт более чем вдвое (SC-002, SC-007)
+- [X] T073 [P] Проверить качество выдачи по проверке 2 quickstart.md: 20 разделов без утверждений, которых нет в записи, расхождение таймкода не более 10 секунд, раздел понятен без просмотра записи (SC-003, SC-004)
+- [X] T074 Переписать `README.md` под проект: что за сервис, как развернуть, как подключить ассистента; удалить содержимое шаблона Bun
+- [X] T075 Создать репозиторий на GitHub через `gh repo create` и запушить; убедиться, что `.env` и `.box` в него не попали (раздел И1 плана)
+- [X] T076 Выполнить первый запуск по разделу И5 плана: `bun run build` → `wrangler deploy` → указать канал → добавить запись вручную → дождаться документа → подключить ассистента
+- [X] T077 [P] Прогнать финальные проверки: `bun test`, `bun run typecheck`, `wrangler deploy --dry-run`; убедиться, что предупреждений и мёртвого кода не осталось (принцип IV)
 - [ ] T078 Настроить автоматическую публикацию через Workers Builds — после того, как ручной путь заработал (раздел И4 плана)
 
 ---
