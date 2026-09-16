@@ -126,7 +126,13 @@ describe("фильтр хранилища", () => {
     expect(buildFilter({ topK: 5, minScore: 0.35 })).toBe("");
   });
 
-  test("апостроф в категории отвергается, а не уезжает в фильтр", () => {
-    expect(() => buildFilter({ topK: 5, minScore: 0.35, category: "Tom's game" })).toThrow(AppError);
+  test("кавычки, обратный слэш и перевод строки в категории отвергаются", () => {
+    // Способа заэкранировать кавычку внутри строки документация Upstash
+    // Vector не описывает, поэтому такие значения не подставляются как есть:
+    // иначе фильтр ломался бы на стороне сервиса вместо понятного отказа.
+    const unsafe = ["Tom's game", 'Игра "Мир"', "C:\\Games", "первая\nвторая"];
+    for (const category of unsafe) {
+      expect(() => buildFilter({ topK: 5, minScore: 0.35, category })).toThrow(AppError);
+    }
   });
 });

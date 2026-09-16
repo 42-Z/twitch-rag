@@ -157,6 +157,68 @@ describe("DELETE /api/streams/:vodId", () => {
     expect(body.deletedChunks).toBe(137);
   });
 
+  test("запись в разборе удалить нельзя — разбор продолжил бы писать", async () => {
+    // Иначе удаление молча отменяется живым прогоном, а повторное добавление
+    // поднимает второй разбор, и два разбора стирают разделы друг друга.
+    const cutoff = Math.floor(Date.now() / 1000);
+    const { services } = servicesWith({
+      existing: {
+        vodId: "2345678901",
+        status: "processing",
+        title: "Пятничный разбор кода",
+        url: "https://www.twitch.tv/videos/2345678901",
+        publishedAt: "2026-03-14T18:03:00Z",
+        publishedAtUnix: cutoff,
+        durationSeconds: 3600,
+        categories: [],
+        source: "manual",
+        attempts: 1,
+        processedAt: cutoff,
+      },
+    });
+
+    try {
+      await handleDeleteStream(
+        "2345678901",
+        new Request("https://x", { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } }),
+        envWith(),
+        services,
+      );
+      throw new Error("ожидалась ошибка busy");
+    } catch (error) {
+      expect((error as AppError).code).toBe("busy");
+    }
+  });
+
+  test("брошенную запись в processing удалить можно", async () => {
+    // Разбор, застрявший больше суток, считается брошенным: держать его
+    // вечно нельзя, иначе запись не убрать никогда.
+    const stale = Math.floor(Date.now() / 1000) - 25 * 60 * 60;
+    const { services } = servicesWith({
+      existing: {
+        vodId: "2345678901",
+        status: "processing",
+        title: "Пятничный разбор кода",
+        url: "https://www.twitch.tv/videos/2345678901",
+        publishedAt: "2026-03-14T18:03:00Z",
+        publishedAtUnix: stale,
+        durationSeconds: 3600,
+        categories: [],
+        source: "manual",
+        attempts: 1,
+        processedAt: stale,
+      },
+    });
+
+    const response = await handleDeleteStream(
+      "2345678901",
+      new Request("https://x", { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } }),
+      envWith(),
+      services,
+    );
+    expect(response.status).toBe(200);
+  });
+
   test("без токена владельца — отказ, удаление не выполняется", async () => {
     const { services } = servicesWith();
     try {

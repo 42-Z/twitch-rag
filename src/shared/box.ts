@@ -53,9 +53,10 @@ export class BoxRunner {
       const box = await Box.get(this.config.boxId, { apiKey: this.config.apiKey });
       const run = await box.exec.command(command);
       if (run.exitCode !== null && run.exitCode !== 0) {
-        throw new AppError("upstream_unavailable", "Бокс не смог запустить разбор записи.", {
-          hint: run.stderr.slice(0, 200),
-        });
+        // Вывод оболочки — в журнал, а не в тело ответа: оттуда он попал бы
+        // наружу, а что именно печатает бокс, мы не решаем.
+        console.error(`[бокс] запуск разбора не удался: ${run.stderr.slice(0, 500)}`);
+        throw new AppError("upstream_unavailable", "Бокс не смог запустить разбор записи.");
       }
     });
   }

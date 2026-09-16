@@ -186,9 +186,10 @@ export class Registry {
 
   // --- токен площадки ---
 
+  /** Пустое значение читается как отсутствие: сброс кэша не должен оставлять пустышку. */
   async getCachedTwitchToken(): Promise<string | undefined> {
     const token = await this.call(() => this.redis.get<string>(TOKEN_KEY));
-    return token ?? undefined;
+    return token === null || token === "" ? undefined : token;
   }
 
   async cacheTwitchToken(token: string, expiresInSeconds: number): Promise<void> {
@@ -197,12 +198,41 @@ export class Registry {
     await this.call(() => this.redis.set(TOKEN_KEY, token, { ex: ttl }));
   }
 
+  /**
+   * Сброс кэша токена при отказе авторизации. Именно удаление: запись пустой
+   * строки оставляла бы ключ живым, а пустой токен — пригодным к употреблению,
+   * и повтор уходил бы с заголовком `Bearer ` до истечения срока.
+   */
+  async forgetTwitchToken(): Promise<void> {
+    await this.call(() => this.redis.del(TOKEN_KEY));
+  }
+
   async healthy(): Promise<boolean> {
     try {
       await this.redis.ping();
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Кэш дорогих ответов. Ошибка хранилища не поднимается: кэш — ускорение,
+   * а не источник истины, и его недоступность не должна ломать сам ответ.
+   */
+  async readCache<T>(key: string): Promise<T | undefined> {
+    try {
+      return (await this.redis.get<T>(key)) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async writeCache(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+    try {
+      await this.redis.set(key, value, { ex: ttlSeconds });
+    } catch {
+      // Промах кэша стоит одного пересчёта — это не повод падать.
     }
   }
 

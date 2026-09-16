@@ -38,6 +38,9 @@ function isFailure(body: unknown): body is IngestFailedBody {
   return typeof body === "object" && body !== null && (body as { failed?: unknown }).failed === true;
 }
 
+/** Коды отказа бокса, после которых запись брать больше не нужно (`pipeline/media.ts`). */
+const PERMANENT_FAILURES = new Set(["subscriber_only", "not_found", "geo_blocked"]);
+
 /**
  * Инстанс Workflow называется по записи и прогону: `create` с занятым именем
  * бросает ошибку, и это ровно нужный признак повтора. Реестр для дедупликации
@@ -75,12 +78,20 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
   const body = await parseBody(request);
 
   if (isFailure(body)) {
+    // Пропуск без возврата — только для того, что не изменится: запись
+    // закрыта для подписчиков, удалена или недоступна из этого региона
+    // (FR-006). Сбой скачивания временный: пометив его пропуском, мы
+    // выбрасывали бы запись навсегда, тогда как спецификация требует
+    // оставить её необработанной и взять позже (FR-002). Неизвестный код
+    // считается временным — ошибиться в сторону повтора дешевле.
+    const permanent = PERMANENT_FAILURES.has(body.code);
+    const status = permanent ? "skipped" : "failed";
     await services.registry.patchStream(body.vodId, {
-      status: "skipped",
+      status,
       reason: body.message,
       processedAt: nowUnix(),
     });
-    return Response.json({ vodId: body.vodId, status: "skipped" });
+    return Response.json({ vodId: body.vodId, status });
   }
 
   const payload = body as IngestReadyBody;
@@ -90,20 +101,6 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
   const runId = requireRunId(payload.runId);
 
   const existing = await services.registry.getStream(payload.vodId);
-
-  await services.registry.putStream({
-    vodId: payload.vodId,
-    status: "processing",
-    title: payload.title,
-    url: `https://www.twitch.tv/videos/${payload.vodId}`,
-    publishedAt: payload.publishedAt,
-    publishedAtUnix: Math.floor(new Date(payload.publishedAt).getTime() / 1000),
-    durationSeconds: payload.durationSeconds,
-    categories: payload.categories,
-    source: existing?.source ?? "manual",
-    attempts: (existing?.attempts ?? 0) + 1,
-    processedAt: nowUnix(),
-  });
 
   const params: IngestParams = {
     vodId: payload.vodId,
@@ -115,9 +112,10 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
     chunks: payload.chunks,
   };
 
+  let instanceId: string;
   try {
     const instance = await env.INGEST.create({ id: workflowInstanceId(payload.vodId, runId), params });
-    return Response.json({ vodId: payload.vodId, status: "processing", instanceId: instance.id }, { status: 202 });
+    instanceId = instance.id;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!/exist/i.test(message)) {
@@ -126,6 +124,29 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
     }
     return Response.json({ vodId: payload.vodId, status: "processing" });
   }
+
+  // Реестр трогается только после того, как разбор действительно создан:
+  // запись на этот момент уже стоит в `processing` (её поставил запуск), а
+  // повторный сигнал, случившийся после успеха, иначе возвращал бы готовую
+  // запись обратно в `processing` и поднимал бы число попыток.
+  await services.registry.putStream({
+    vodId: payload.vodId,
+    status: "processing",
+    title: payload.title,
+    url: `https://www.twitch.tv/videos/${payload.vodId}`,
+    publishedAt: payload.publishedAt,
+    publishedAtUnix: Math.floor(new Date(payload.publishedAt).getTime() / 1000),
+    durationSeconds: payload.durationSeconds,
+    categories: payload.categories,
+    source: existing?.source ?? "manual",
+    // Попытка здесь не считается: её уже зачёл запуск разбора
+    // (`startStreamIngest`), а сигнал бокса — это тот же самый заход, а не
+    // новый. Второй счёт съедал попытки вдвое быстрее заявленного.
+    attempts: existing?.attempts ?? 1,
+    processedAt: nowUnix(),
+  });
+
+  return Response.json({ vodId: payload.vodId, status: "processing", instanceId }, { status: 202 });
 }
 
 function nowUnix(): number {

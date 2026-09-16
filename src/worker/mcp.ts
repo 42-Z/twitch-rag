@@ -13,6 +13,7 @@
 import { createMcpHandler } from "agents/mcp/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { DATE_PATTERN } from "./routes/knowledge.ts";
 import type { Env } from "./env.ts";
 import { createServices } from "./env.ts";
 import { formatClock } from "../shared/time.ts";
@@ -38,8 +39,8 @@ export function createMcpServer(env: Env): McpServer {
       inputSchema: {
         query: z.string().describe("Вопрос или тема обычными словами"),
         topK: z.number().int().min(1).max(20).optional().describe("Сколько разделов вернуть, по умолчанию 5"),
-        from: z.string().optional().describe("Не раньше этой даты эфира, ГГГГ-ММ-ДД"),
-        to: z.string().optional().describe("Не позже этой даты эфира, ГГГГ-ММ-ДД"),
+        from: z.string().regex(DATE_PATTERN, "Ожидается дата вида ГГГГ-ММ-ДД").optional().describe("Не раньше этой даты эфира, ГГГГ-ММ-ДД"),
+        to: z.string().regex(DATE_PATTERN, "Ожидается дата вида ГГГГ-ММ-ДД").optional().describe("Не позже этой даты эфира, ГГГГ-ММ-ДД"),
         category: z.string().optional().describe("Ограничить категорией трансляции"),
       },
     },
@@ -102,8 +103,8 @@ export function createMcpServer(env: Env): McpServer {
       description:
         "Перечислить разобранные трансляции с датами и категориями. Использовать, когда вопрос касается конкретного эфира или периода, а не темы.",
       inputSchema: {
-        from: z.string().optional().describe("Не раньше этой даты эфира, ГГГГ-ММ-ДД"),
-        to: z.string().optional().describe("Не позже этой даты эфира, ГГГГ-ММ-ДД"),
+        from: z.string().regex(DATE_PATTERN, "Ожидается дата вида ГГГГ-ММ-ДД").optional().describe("Не раньше этой даты эфира, ГГГГ-ММ-ДД"),
+        to: z.string().regex(DATE_PATTERN, "Ожидается дата вида ГГГГ-ММ-ДД").optional().describe("Не позже этой даты эфира, ГГГГ-ММ-ДД"),
         limit: z.number().int().min(1).max(50).optional().describe("Сколько трансляций вернуть, по умолчанию 20"),
       },
     },

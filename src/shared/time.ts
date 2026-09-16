@@ -34,6 +34,21 @@ export function vodUrlAt(vodId: string, startSeconds: number): string {
   return `https://www.twitch.tv/videos/${vodId}?t=${toTwitchTimecode(startSeconds)}`;
 }
 
+/**
+ * Длительность словами: «5 ч 17 мин», «40 мин», «меньше минуты».
+ *
+ * Остаток считается от округлённых минут, а не от секунд: иначе 3591 секунда
+ * давала бы «60 мин», а 7195 — «1 ч 60 мин».
+ */
+export function formatDuration(totalSeconds: number): string {
+  const minutes = Math.round(Math.max(0, totalSeconds) / 60);
+  if (minutes === 0) return "меньше минуты";
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${rest} мин`;
+  return rest === 0 ? `${hours} ч` : `${hours} ч ${rest} мин`;
+}
+
 /** Человекочитаемое время внутри эфира: `1:12:30` или `12:30`. */
 export function formatClock(totalSeconds: number): string {
   const whole = Math.max(0, Math.floor(totalSeconds));
@@ -60,10 +75,7 @@ export interface TranscriptSegment {
   text: string;
 }
 
-/**
- * Метки куска приводятся ко времени всей записи. Куски режутся с перекрытием,
- * поэтому у соседей края накладываются — это снимается при склейке.
- */
+/** Метки куска приводятся ко времени всей записи. */
 export function shiftSegments(segments: readonly TranscriptSegment[], offsetSeconds: number): TranscriptSegment[] {
   return segments.map((segment) => ({
     start: segment.start + offsetSeconds,
@@ -75,28 +87,13 @@ export function shiftSegments(segments: readonly TranscriptSegment[], offsetSeco
 /**
  * Склейка распознанных кусков в сплошную расшифровку.
  *
- * Куски перекрываются пятью секундами, чтобы не потерять фразу на стыке;
- * из-за этого одна и та же фраза приходит дважды. Дубликат отбрасывается по
- * совпадению текста в зоне перекрытия, а не по одному лишь времени: границы
- * сегментов у соседних кусков не совпадают точно.
+ * Куски режутся встык, без наложения, поэтому склейка — это сложение подряд.
+ * Фраза, попавшая точно на стык, может распознаться половинками: это
+ * известная плата за нарезку одним проходом (`segment.ts`), а не повод
+ * что-то выбрасывать при склейке.
  */
 export function mergeTranscripts(chunks: readonly TranscriptSegment[][]): TranscriptSegment[] {
-  const merged: TranscriptSegment[] = [];
-  for (const chunk of chunks) {
-    for (const segment of chunk) {
-      const previous = merged[merged.length - 1];
-      if (previous !== undefined && segment.start < previous.end) {
-        const sameText = normalizeForCompare(previous.text) === normalizeForCompare(segment.text);
-        if (sameText) continue;
-      }
-      merged.push(segment);
-    }
-  }
-  return merged;
-}
-
-function normalizeForCompare(text: string): string {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return chunks.flat();
 }
 
 /** Язык, выпавший на большинстве кусков; пустые определения не в счёт. */

@@ -38,7 +38,18 @@ interface Route {
  * строкой таблицы и не трогает соседние.
  */
 const ROUTES: Route[] = [
-  { method: "GET", pattern: "/api/health", handler: (_request, env) => handleHealth(env) },
+  {
+    method: "GET",
+    pattern: "/api/health",
+    handler: async (request, env) => {
+      // Проверка состояния дороже прочих путей: она делает несколько
+      // обращений к внешним сервисам и пробную запись в хранилище, то есть
+      // один чужой запрос превращается в добрый десяток исходящих. Без
+      // ограничителя это готовый рычаг для любого, кто узнал адрес.
+      await enforceRateLimit(request, env, "health");
+      return handleHealth(env);
+    },
+  },
 
   {
     method: "POST",

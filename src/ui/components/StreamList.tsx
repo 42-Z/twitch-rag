@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { formatDuration } from "@/shared/time.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
@@ -18,12 +19,6 @@ import { listStreams, type StreamSummary } from "../lib/registry.ts";
 function formatDate(iso: string): string {
   if (iso === "") return "дата неизвестна";
   return new Date(iso).toLocaleDateString("ru-RU", { year: "numeric", month: "long", day: "numeric" });
-}
-
-function formatDuration(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
-  return hours > 0 ? `${hours} ч ${minutes} мин` : `${minutes} мин`;
 }
 
 interface StreamListProps {

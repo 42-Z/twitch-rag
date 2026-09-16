@@ -26,12 +26,21 @@ function fakeEnv(options: { existingInstanceIds?: Set<string>; failCreate?: Erro
   } as unknown as Env;
 }
 
-function fakeServices(): Services {
+interface Captured {
+  patched: Array<{ vodId: string; patch: Record<string, unknown> }>;
+  put: Array<Record<string, unknown>>;
+}
+
+function fakeServices(captured?: Captured): Services {
   return {
     registry: {
       getStream: async () => undefined,
-      putStream: async () => undefined,
-      patchStream: async () => undefined,
+      putStream: async (record: Record<string, unknown>) => {
+        captured?.put.push(record);
+      },
+      patchStream: async (vodId: string, patch: Record<string, unknown>) => {
+        captured?.patched.push({ vodId, patch });
+      },
     },
   } as unknown as Services;
 }
@@ -90,6 +99,21 @@ describe("POST /api/internal/ingest-ready", () => {
     expect(data.status).toBe("processing");
   });
 
+  test("повторный сигнал не возвращает готовую запись в обработку", async () => {
+    // Запись реестра трогается только после успешного создания разбора:
+    // иначе запоздалый повторный сигнал переводил бы `ready` обратно в
+    // `processing`, и запись висела бы так до следующего опроса.
+    const captured: Captured = { patched: [], put: [] };
+    const env = fakeEnv();
+    const services = fakeServices(captured);
+    await handleIngestReady(request(body()), env, services);
+    const writes = captured.put.length;
+
+    await handleIngestReady(request(body()), env, services);
+
+    expect(captured.put.length).toBe(writes);
+  });
+
   test("настоящий сбой создания инстанса не маскируется под повтор", async () => {
     const env = fakeEnv({ failCreate: new Error("Internal error") });
     try {
@@ -137,6 +161,35 @@ describe("POST /api/internal/ingest-ready", () => {
     );
     const data = (await response.json()) as { status: string };
     expect(data.status).toBe("skipped");
+  });
+
+  test("временный отказ бокса оставляет запись к повтору, а не пропускает навсегда", async () => {
+    // Сбой скачивания — не приговор: пропуск снимает запись с работы
+    // навсегда, а спецификация требует взять её позже.
+    const captured: Captured = { patched: [], put: [] };
+    await handleIngestReady(
+      request({ vodId: "2873255697", failed: true, code: "download_failed", message: "не удалось скачать" }),
+      fakeEnv(),
+      fakeServices(captured),
+    );
+    expect(captured.patched[0]?.patch["status"]).toBe("failed");
+  });
+
+  test("неизвестный код отказа считается временным", async () => {
+    const captured: Captured = { patched: [], put: [] };
+    await handleIngestReady(
+      request({ vodId: "2873255697", failed: true, code: "что-то новое", message: "непонятно" }),
+      fakeEnv(),
+      fakeServices(captured),
+    );
+    expect(captured.patched[0]?.patch["status"]).toBe("failed");
+  });
+
+  test("сигнал бокса не начисляет вторую попытку", async () => {
+    // Попытку зачёл запуск разбора; сигнал — это тот же заход.
+    const captured: Captured = { patched: [], put: [] };
+    await handleIngestReady(request(body()), fakeEnv(), fakeServices(captured));
+    expect(captured.put[0]?.["attempts"]).toBe(1);
   });
 
   test("без секрета — отказ", async () => {

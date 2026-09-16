@@ -14,6 +14,7 @@ import {
   mergeTranscripts,
   shiftSegments,
   prevailingLanguage,
+  formatDuration,
   type TranscriptSegment,
 } from "../shared/time.ts";
 import { vodUrlAt } from "../shared/time.ts";
@@ -48,7 +49,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       // разбиты по кускам. Забытое подчищает почасовая уборка по возрасту
       // (`cleanupStaleAudio` в index.ts).
       const message = error instanceof Error ? error.message : String(error);
-      if (!isEngineReset(message)) {
+      if (!isEngineReset(message) && !(await isAlreadyFinished(params.vodId, services))) {
         // Запись не должна остаться в processing навсегда — её возьмут заново
         // на следующем опросе (schedule.ts проверяет attempts).
         await services.registry.patchStream(params.vodId, { status: "failed", reason: message });
@@ -235,12 +236,24 @@ function nowUnix(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+/**
+ * Разбор уже дошёл до итога — отказом его помечать нельзя.
+ *
+ * Последним шагом идёт уборка временного аудио, и её сбой (или сбой движка
+ * после отметки) прежде затирал `ready` на `failed`. Дальше почасовой опрос
+ * видел нерастраченные попытки и запускал разбор заново: повторное
+ * скачивание, повторное распознавание за деньги и стирание уже готовых
+ * векторов. Готовое должно оставаться готовым.
+ */
+async function isAlreadyFinished(vodId: string, services: Services): Promise<boolean> {
+  const record = await services.registry.getStream(vodId).catch(() => undefined);
+  return record?.status === "ready" || record?.status === "skipped";
+}
+
 /** «2 ч 14 мин в 3 участках» — столько эфира не попало ни в один раздел. */
 export function formatGaps(gaps: ReadonlyArray<{ from: number; to: number }>): string {
   const seconds = gaps.reduce((sum, gap) => sum + (gap.to - gap.from), 0);
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
-  const duration = hours > 0 ? `${hours} ч ${minutes} мин` : `${minutes} мин`;
+  const duration = formatDuration(seconds);
   return gaps.length === 1 ? duration : `${duration} в ${gaps.length} участках`;
 }
 

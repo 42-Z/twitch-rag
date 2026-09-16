@@ -41,6 +41,10 @@ export async function handleHealth(env: Env): Promise<Response> {
         channel?.lastCheckedAt === undefined
           ? null
           : new Date(channel.lastCheckedAt * 1000).toISOString(),
+      // Сбой опроса иначе нигде не виден: расписание пишет его в реестр, а
+      // реестр в эту проверку не попадал — владелец узнавал о поломке лишь
+      // по тому, что новые эфиры перестали появляться.
+      lastCheckError: channel?.lastCheckError ?? null,
     },
     { status: degraded ? 503 : 200 },
   );

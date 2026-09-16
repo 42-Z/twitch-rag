@@ -22,6 +22,8 @@ import { getChannel, type ChannelSummary } from "./lib/registry.ts";
 interface HealthReport {
   status: "ok" | "degraded";
   checks: Record<string, "ok" | "fail">;
+  /** Причина последнего сбоя опроса канала, если он был. */
+  lastCheckError?: string | null;
 }
 
 function useHealth(): HealthReport | undefined {
@@ -135,6 +137,15 @@ export function App(): React.JSX.Element {
               .map(([name]) => name)
               .join(", ") || "проверьте /api/health"}
           </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Опрос канала мог ни разу не пройти: тогда новые эфиры не появляются,
+          а причина нигде не видна — только здесь. */}
+      {health?.lastCheckError != null && health.lastCheckError !== "" && (
+        <Alert variant="destructive">
+          <AlertTitle>Канал не опрашивается</AlertTitle>
+          <AlertDescription>{health.lastCheckError}</AlertDescription>
         </Alert>
       )}
 

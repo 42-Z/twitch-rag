@@ -7,6 +7,7 @@ import {
   parseClock,
   shiftSegments,
   mergeTranscripts,
+  formatDuration,
   prevailingLanguage,
 } from "../../src/shared/time.ts";
 
@@ -60,35 +61,50 @@ describe("человекочитаемое время", () => {
   });
 });
 
+describe("длительность словами", () => {
+  test("часы и минуты без лишнего нуля", () => {
+    expect(formatDuration(19019)).toBe("5 ч 17 мин");
+    expect(formatDuration(7200)).toBe("2 ч");
+    expect(formatDuration(2400)).toBe("40 мин");
+  });
+
+  test("остаток считается от округлённых минут", () => {
+    // 3591 с — это 59 мин 51 с: при округлении до минут выходит час, и
+    // «60 мин» здесь было бы неправдой.
+    expect(formatDuration(3591)).toBe("1 ч");
+    // 7195 с — это 119 мин 55 с, то есть уже два часа, а не «1 ч 60 мин».
+    expect(formatDuration(7195)).toBe("2 ч");
+  });
+
+  test("совсем короткое не превращается в ноль", () => {
+    expect(formatDuration(20)).toBe("меньше минуты");
+    expect(formatDuration(0)).toBe("меньше минуты");
+  });
+});
+
 describe("приведение времени куска ко времени записи", () => {
   test("смещение прибавляется к обеим меткам", () => {
     const shifted = shiftSegments([{ start: 3, end: 9, text: "привет" }], 600);
     expect(shifted).toEqual([{ start: 603, end: 609, text: "привет" }]);
   });
 
-  test("склейка выбрасывает фразу, повторённую в зоне перекрытия", () => {
+  test("куски складываются подряд, порядок и текст сохраняются", () => {
+    // Куски режутся встык, без наложения (segment.ts): склейка ничего не
+    // выбрасывает. Тест сторожит именно это — прежде здесь проверялось
+    // перекрытие, которого в конвейере не было.
     const first = [
       { start: 0, end: 5, text: "первая фраза" },
       { start: 595, end: 600, text: "фраза на стыке" },
     ];
     const second = [
-      { start: 597, end: 601, text: "Фраза на стыке!" },
-      { start: 601, end: 606, text: "вторая фраза" },
+      { start: 600, end: 604, text: "фраза на стыке" },
+      { start: 604, end: 609, text: "вторая фраза" },
     ];
-    const merged = mergeTranscripts([first, second]);
-    expect(merged.map((segment) => segment.text)).toEqual([
-      "первая фраза",
-      "фраза на стыке",
-      "вторая фраза",
-    ]);
+    expect(mergeTranscripts([first, second])).toEqual([...first, ...second]);
   });
 
-  test("разные фразы в зоне перекрытия сохраняются обе", () => {
-    const merged = mergeTranscripts([
-      [{ start: 595, end: 600, text: "что-то одно" }],
-      [{ start: 597, end: 602, text: "совсем другое" }],
-    ]);
-    expect(merged).toHaveLength(2);
+  test("пустые куски не мешают", () => {
+    expect(mergeTranscripts([[], [{ start: 0, end: 2, text: "речь" }], []])).toHaveLength(1);
   });
 });
 

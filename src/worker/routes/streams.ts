@@ -6,6 +6,7 @@
 
 import { z } from "zod";
 import { AppError } from "../../shared/errors.ts";
+import { isStale } from "../../shared/registry.ts";
 import { skipReason } from "../../shared/twitch.ts";
 import type { Env, Services } from "../env.ts";
 
@@ -105,11 +106,24 @@ export async function startStreamIngest(
     processedAt: Math.floor(Date.now() / 1000),
   });
 
-  await services.box.startIngest({
-    vodId,
-    url: video.url,
-    callbackUrl: `${callbackBaseUrl}/api/internal/ingest-ready`,
-  });
+  try {
+    await services.box.startIngest({
+      vodId,
+      url: video.url,
+      callbackUrl: `${callbackBaseUrl}/api/internal/ingest-ready`,
+    });
+  } catch (error) {
+    // Бокс не принял работу — разбора не будет, и держать запись в
+    // `processing` нельзя: сутки она выглядела бы разбираемой, и ни
+    // владелец, ни расписание не могли бы её тронуть.
+    const message = error instanceof Error ? error.message : String(error);
+    await services.registry.patchStream(vodId, {
+      status: "failed",
+      reason: `Разбор не запустился: ${message}`,
+      processedAt: Math.floor(Date.now() / 1000),
+    });
+    throw error;
+  }
 }
 
 // --- GET /api/streams/:vodId/document (FR-031) ---
@@ -134,6 +148,17 @@ export async function handleDeleteStream(
   services: Services,
 ): Promise<Response> {
   requireAdminToken(request, env);
+
+  // Пока разбор идёт, удалять нельзя: инстанс Workflow не связан с этим
+  // запросом и продолжит писать — вернёт векторы, документ и запись реестра,
+  // то есть удаление будет молча отменено. А поскольку запись исчезнет из
+  // индекса, следующий запуск по тому же адресу сочтёт её новой и поднимет
+  // второй разбор; два разбора делят эфир по-своему и стирают разделы друг
+  // друга. Занятая запись отвергается, пока не закончит или не устареет.
+  const existing = await services.registry.getStream(vodId);
+  if (existing?.status === "processing" && !isStale(existing, Math.floor(Date.now() / 1000))) {
+    throw new AppError("busy", "Эту запись сейчас разбирают — удалить её нельзя.");
+  }
 
   const deletedChunks = await services.knowledge.removeStream(vodId);
   await services.documents.remove(vodId).catch(() => undefined);

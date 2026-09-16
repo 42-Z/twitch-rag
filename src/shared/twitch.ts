@@ -20,6 +20,8 @@ export interface TwitchCredentials {
 export interface TokenCache {
   getCachedTwitchToken(): Promise<string | undefined>;
   cacheTwitchToken(token: string, expiresInSeconds: number): Promise<void>;
+  /** Сброс при отказе авторизации: ключ удаляется, а не переписывается пустым. */
+  forgetTwitchToken(): Promise<void>;
 }
 
 export interface TwitchChannel {
@@ -61,11 +63,42 @@ export class Twitch {
   }
 
   /** Записи прошедших эфиров, свежие первыми. */
-  async listArchiveVideos(userId: string, limit = 20): Promise<TwitchVideo[]> {
-    const data = await this.helix<{ data: RawVideo[] }>(
-      `/videos?user_id=${encodeURIComponent(userId)}&type=archive&first=${Math.min(limit, 100)}`,
+  async listArchiveVideos(userId: string, limit = 20, after?: string): Promise<TwitchVideo[]> {
+    const cursor = after === undefined ? "" : `&after=${encodeURIComponent(after)}`;
+    const data = await this.helix<{ data: RawVideo[]; pagination?: { cursor?: string } }>(
+      `/videos?user_id=${encodeURIComponent(userId)}&type=archive&first=${Math.min(limit, 100)}${cursor}`,
     );
     return data.data.map(toVideo);
+  }
+
+  /**
+   * Просмотр архива страницами: за один запуск берётся одна запись к разбору,
+   * поэтому окно в одну страницу пропускало бы эфиры, появившиеся за время
+   * простоя. Просмотр останавливается на первой известной записи — в обычной
+   * работе это первая же страница, — и не длится дольше `maxPages`.
+   */
+  async listArchive(
+    userId: string,
+    options: { pageSize: number; maxPages: number; stopAt: (video: TwitchVideo) => boolean },
+  ): Promise<TwitchVideo[]> {
+    const collected: TwitchVideo[] = [];
+    let after: string | undefined;
+
+    for (let page = 0; page < options.maxPages; page++) {
+      const cursor = after === undefined ? "" : `&after=${encodeURIComponent(after)}`;
+      const data = await this.helix<{ data: RawVideo[]; pagination?: { cursor?: string } }>(
+        `/videos?user_id=${encodeURIComponent(userId)}&type=archive&first=${Math.min(options.pageSize, 100)}${cursor}`,
+      );
+
+      const batch = data.data.map(toVideo);
+      collected.push(...batch);
+      if (batch.length === 0 || batch.some(options.stopAt)) break;
+
+      after = data.pagination?.cursor;
+      if (after === undefined || after === "") break;
+    }
+
+    return collected;
   }
 
   async getVideo(vodId: string): Promise<TwitchVideo> {
@@ -126,7 +159,7 @@ export class Twitch {
 
     // Токен могли отозвать раньше срока — один повтор с новым токеном.
     if (response.status === 401 && retryOnAuthFailure) {
-      await this.cache.cacheTwitchToken("", 1);
+      await this.cache.forgetTwitchToken();
       return await this.helix<T>(path, false);
     }
     if (!response.ok) {

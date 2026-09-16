@@ -8,6 +8,7 @@
 
 import { Bucket } from "@upstash/blob";
 import { AppError, upstreamError } from "./errors.ts";
+import { formatDuration } from "./time.ts";
 
 export interface DocumentsConfig {
   token: string;
@@ -101,9 +102,7 @@ export function renderDocumentHeader(input: {
   categories: readonly string[];
 }): string {
   const date = input.publishedAt.slice(0, 10);
-  const hours = Math.floor(input.durationSeconds / 3600);
-  const minutes = Math.round((input.durationSeconds % 3600) / 60);
-  const duration = hours > 0 ? `${hours} ч ${minutes} мин` : `${minutes} мин`;
+  const duration = formatDuration(input.durationSeconds);
   const categories = input.categories.length > 0 ? `\n\n**Категории**: ${input.categories.join(", ")}` : "";
   return `# ${input.title}\n\n**Эфир**: ${date} · **Длительность**: ${duration}${categories}`;
 }

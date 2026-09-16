@@ -15,9 +15,6 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 
 export const CHUNK_SECONDS = 600;
-/** Перекрытие: `prompt` с контекстом предыдущего куска OpenRouter игнорирует,
- *  поэтому единственный способ не потерять фразу на стыке — наложение. */
-export const OVERLAP_SECONDS = 5;
 
 export interface AudioChunk {
   index: number;

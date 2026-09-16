@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { selectNextVideo } from "../../src/worker/schedule.ts";
+import { selectNextVideo, retireExhausted } from "../../src/worker/schedule.ts";
 import { MAX_ATTEMPTS, type StreamRecord } from "../../src/shared/registry.ts";
 import type { TwitchVideo } from "../../src/shared/twitch.ts";
 
@@ -90,5 +90,65 @@ describe("отбор записи к автоматическому разбор
 
   test("без кандидатов возвращается undefined — отсутствие новых записей не ошибка", () => {
     expect(selectNextVideo([], new Map(), 1800000000, NOW)).toBeUndefined();
+  });
+});
+
+describe("исчерпавшие попытки", () => {
+  function record(overrides: Partial<StreamRecord>): StreamRecord {
+    return {
+      vodId: "1",
+      status: "failed",
+      title: "Эфир",
+      url: "https://www.twitch.tv/videos/1",
+      publishedAt: "2026-03-14T18:03:00Z",
+      publishedAtUnix: 1773511380,
+      durationSeconds: 3600,
+      categories: [],
+      source: "auto",
+      attempts: 1,
+      ...overrides,
+    };
+  }
+
+  test("после трёх попыток запись становится пропущенной с причиной", async () => {
+    // Модель данных требует именно пропуска: иначе запись навсегда висит
+    // «неудачной» — владелец видит недоделку, а сводка знаний не считает её.
+    const patched: Array<{ vodId: string; patch: Record<string, unknown> }> = [];
+    const known = new Map<string, StreamRecord>([
+      ["1", record({ vodId: "1", status: "failed", attempts: MAX_ATTEMPTS, reason: "сервис недоступен" })],
+    ]);
+    const services = {
+      registry: {
+        patchStream: async (vodId: string, patch: Record<string, unknown>) => {
+          patched.push({ vodId, patch });
+        },
+      },
+    } as unknown as Parameters<typeof retireExhausted>[1];
+
+    await retireExhausted(known, services);
+
+    expect(patched[0]?.patch["status"]).toBe("skipped");
+    expect(patched[0]?.patch["reason"]).toBe("сервис недоступен");
+    expect(known.get("1")?.status).toBe("skipped");
+  });
+
+  test("недоисчерпанные и уже готовые не трогаются", async () => {
+    const patched: unknown[] = [];
+    const known = new Map<string, StreamRecord>([
+      ["1", record({ vodId: "1", status: "failed", attempts: MAX_ATTEMPTS - 1 })],
+      ["2", record({ vodId: "2", status: "ready", attempts: 9 })],
+    ]);
+    const services = {
+      registry: {
+        patchStream: async (...args: unknown[]) => {
+          patched.push(args);
+        },
+      },
+    } as unknown as Parameters<typeof retireExhausted>[1];
+
+    await retireExhausted(known, services);
+
+    expect(patched).toHaveLength(0);
+    expect(known.get("1")?.status).toBe("failed");
   });
 });

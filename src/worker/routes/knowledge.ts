@@ -21,12 +21,15 @@ import { MAX_QUERY_CHARS } from "../ratelimit.ts";
  */
 const DEFAULT_MIN_SCORE = 0.65;
 
+/** Форма даты эфира — общая для HTTP-пути и инструментов MCP. */
+export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 const searchSchema = z.object({
   query: z.string().trim().min(1).max(MAX_QUERY_CHARS),
   topK: z.number().int().min(1).max(20).optional(),
   minScore: z.number().min(0).max(1).optional(),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: z.string().regex(DATE_PATTERN).optional(),
+  to: z.string().regex(DATE_PATTERN).optional(),
   category: z.string().trim().max(200).optional(),
 });
 
@@ -123,8 +126,31 @@ export interface KnowledgeStats {
   lastIndexedAt: string | null;
 }
 
-/** Границы базы знаний: нужны ассистенту, чтобы честно говорить о пределах своих сведений. */
+/** Сколько держится посчитанная сводка: свежесть в минутах против пересчёта на каждый запрос. */
+const STATS_CACHE_SECONDS = 300;
+const STATS_CACHE_KEY = "stats:knowledge";
+
+/**
+ * Границы базы знаний: нужны ассистенту, чтобы честно говорить о пределах
+ * своих сведений.
+ *
+ * Сводка считается по всем записям реестра, а это по команде на запись —
+ * стоимость запроса росла бы вместе с архивом, и публичный путь превращался
+ * бы в рычаг тем сильнее, чем дольше работает сервис. Поэтому результат
+ * держится в кэше: при сотнях записей это разница между сотнями команд на
+ * каждый чужой запрос и сотнями команд раз в пять минут. Плата — сводка
+ * отстаёт от реестра на эти пять минут, что для границ базы несущественно.
+ */
 export async function knowledgeStats(services: Services): Promise<KnowledgeStats> {
+  const cached = await services.registry.readCache<KnowledgeStats>(STATS_CACHE_KEY);
+  if (cached !== undefined) return cached;
+
+  const computed = await computeKnowledgeStats(services);
+  await services.registry.writeCache(STATS_CACHE_KEY, computed, STATS_CACHE_SECONDS);
+  return computed;
+}
+
+async function computeKnowledgeStats(services: Services): Promise<KnowledgeStats> {
   const [channel, streams] = await Promise.all([
     services.registry.getChannel(),
     services.registry.listStreams(),
