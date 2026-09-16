@@ -9,7 +9,6 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { callOwnerApi, TOKEN_HINT, type TokenState } from "../lib/owner.ts";
@@ -58,127 +57,115 @@ export function ManagePage({
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            Токен владельца
-            {allowed && <Badge variant="secondary">принят</Badge>}
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Тот же токен, что задан секретом <code>APP_ADMIN_TOKEN</code>. Хранится только в
-            памяти страницы: после перезагрузки вводится заново, между разделами сохраняется.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-1">
-            <Label htmlFor="admin-token">Токен</Label>
-            <Input
-              id="admin-token"
-              type="password"
-              value={adminToken}
-              onChange={(event) => onTokenChange(event.target.value)}
-              autoComplete="off"
-              placeholder="вставьте токен"
-            />
-          </div>
+    <div className="space-y-8">
+      <section className="space-y-3">
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
+          Токен владельца
+          {allowed && <Badge variant="secondary">принят</Badge>}
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Тот же токен, что задан секретом <code>APP_ADMIN_TOKEN</code>. Хранится только в
+          памяти страницы: после перезагрузки вводится заново, между разделами сохраняется.
+        </p>
+        <div className="space-y-1">
+          <Label htmlFor="admin-token">Токен</Label>
+          <Input
+            id="admin-token"
+            type="password"
+            value={adminToken}
+            onChange={(event) => onTokenChange(event.target.value)}
+            autoComplete="off"
+            placeholder="вставьте токен"
+          />
+        </div>
 
-          <p
-            className={
-              tokenState === "invalid" || tokenState === "unreachable"
-                ? "text-sm text-destructive"
-                : "text-sm text-muted-foreground"
-            }
-          >
-            {TOKEN_HINT[tokenState]}
-          </p>
+        <p
+          className={
+            tokenState === "invalid" || tokenState === "unreachable"
+              ? "text-sm text-destructive"
+              : "text-sm text-muted-foreground"
+          }
+        >
+          {TOKEN_HINT[tokenState]}
+        </p>
 
-          {message !== undefined && (
-            <p className={message.kind === "error" ? "text-sm text-destructive" : "text-sm text-emerald-600"}>
-              {message.text}
-            </p>
-          )}
-        </CardContent>
-      </Card>
+        {message !== undefined && (
+          <p className={message.kind === "error" ? "text-sm text-destructive" : "text-sm text-emerald-600"}>
+            {message.text}
+          </p>
+        )}
+      </section>
 
       {allowed && (
         <>
-          <Card>
-            <CardHeader>
-              <CardTitle>Отслеживаемый канал</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                {channel === undefined
-                  ? "Канал ещё не указан — сервис ничего не отслеживает."
-                  : `Сейчас отслеживается «${channel.displayName}». В работу берутся только эфиры после момента подключения.`}
-              </p>
-            </CardHeader>
-            <CardContent>
-              <form
-                className="flex items-end gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void submit(
-                    "channel",
-                    () => callOwnerApi("/api/channel", "PUT", adminToken, { login: channelLogin }),
-                    `Канал «${channelLogin}» подключён.`,
-                    () => setChannelLogin(""),
-                  );
-                }}
-              >
-                <div className="flex-1 space-y-1">
-                  <Label htmlFor="channel-login">Логин канала на Twitch</Label>
-                  <Input
-                    id="channel-login"
-                    value={channelLogin}
-                    onChange={(event) => setChannelLogin(event.target.value)}
-                    placeholder="examplechannel"
-                    required
-                  />
-                </div>
-                <Button type="submit" disabled={busy === "channel" || channelLogin === ""}>
-                  {busy === "channel" ? "Подключаю…" : "Указать канал"}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Отслеживаемый канал</h2>
+            <p className="text-sm text-muted-foreground">
+              {channel === undefined
+                ? "Канал ещё не указан — сервис ничего не отслеживает."
+                : `Сейчас отслеживается «${channel.displayName}». В работу берутся только эфиры после момента подключения.`}
+            </p>
+            <form
+              className="flex items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submit(
+                  "channel",
+                  () => callOwnerApi("/api/channel", "PUT", adminToken, { login: channelLogin }),
+                  `Канал «${channelLogin}» подключён.`,
+                  () => setChannelLogin(""),
+                );
+              }}
+            >
+              <div className="flex-1 space-y-1">
+                <Label htmlFor="channel-login">Логин канала на Twitch</Label>
+                <Input
+                  id="channel-login"
+                  value={channelLogin}
+                  onChange={(event) => setChannelLogin(event.target.value)}
+                  placeholder="examplechannel"
+                  required
+                />
+              </div>
+              <Button type="submit" disabled={busy === "channel" || channelLogin === ""}>
+                {busy === "channel" ? "Подключаю…" : "Указать канал"}
+              </Button>
+            </form>
+          </section>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Добавить запись вручную</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Обычно сервис находит новые эфиры сам раз в час. Вручную стоит добавлять то,
-                что появилось до подключения канала, или прошлые выпуски.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <form
-                className="flex items-end gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void submit(
-                    "stream",
-                    () => callOwnerApi("/api/streams", "POST", adminToken, { url: streamUrl }),
-                    "Запись принята в обработку.",
-                    () => setStreamUrl(""),
-                  );
-                }}
-              >
-                <div className="flex-1 space-y-1">
-                  <Label htmlFor="stream-url">Адрес записи</Label>
-                  <Input
-                    id="stream-url"
-                    value={streamUrl}
-                    onChange={(event) => setStreamUrl(event.target.value)}
-                    placeholder="https://www.twitch.tv/videos/2345678901"
-                    required
-                  />
-                </div>
-                <Button type="submit" variant="secondary" disabled={busy === "stream" || streamUrl === ""}>
-                  {busy === "stream" ? "Добавляю…" : "Добавить"}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Добавить запись вручную</h2>
+            <p className="text-sm text-muted-foreground">
+              Обычно сервис находит новые эфиры сам раз в час. Вручную стоит добавлять то,
+              что появилось до подключения канала, или прошлые выпуски.
+            </p>
+            <form
+              className="flex items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submit(
+                  "stream",
+                  () => callOwnerApi("/api/streams", "POST", adminToken, { url: streamUrl }),
+                  "Запись принята в обработку.",
+                  () => setStreamUrl(""),
+                );
+              }}
+            >
+              <div className="flex-1 space-y-1">
+                <Label htmlFor="stream-url">Адрес записи</Label>
+                <Input
+                  id="stream-url"
+                  value={streamUrl}
+                  onChange={(event) => setStreamUrl(event.target.value)}
+                  placeholder="https://www.twitch.tv/videos/2345678901"
+                  required
+                />
+              </div>
+              <Button type="submit" variant="secondary" disabled={busy === "stream" || streamUrl === ""}>
+                {busy === "stream" ? "Добавляю…" : "Добавить"}
+              </Button>
+            </form>
+          </section>
 
           <Alert>
             <AlertTitle>Удаление — в разделе «Знания»</AlertTitle>

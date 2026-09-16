@@ -5,7 +5,6 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 
 export function McpSetup(): React.JSX.Element {
   const [copied, setCopied] = useState(false);
@@ -17,30 +16,26 @@ export function McpSetup(): React.JSX.Element {
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Подключить ассистента</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Добавьте сервер в настройки MCP своего ИИ-ассистента. Авторизация не требуется.
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-          <code>{config}</code>
-        </pre>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => {
-            void navigator.clipboard.writeText(config).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            });
-          }}
-        >
-          {copied ? "Скопировано" : "Скопировать"}
-        </Button>
-      </CardContent>
-    </Card>
+    <section className="space-y-3">
+      <h2 className="text-lg font-semibold">Подключить ассистента</h2>
+      <p className="text-sm text-muted-foreground">
+        Добавьте сервер в настройки MCP своего ИИ-ассистента. Авторизация не требуется.
+      </p>
+      <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 text-xs">
+        <code>{config}</code>
+      </pre>
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() => {
+          void navigator.clipboard.writeText(config).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          });
+        }}
+      >
+        {copied ? "Скопировано" : "Скопировать"}
+      </Button>
+    </section>
   );
 }

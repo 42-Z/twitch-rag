@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/sidebar.tsx";
 import { TooltipProvider } from "@/components/ui/tooltip.tsx";
 import { Link, usePathname } from "./lib/router.tsx";
-import { matchRoute, ROUTES, type Route, type RouteId } from "./lib/routes.ts";
+import { FOOTER_ROUTES, matchRoute, MENU_ROUTES, type Route, type RouteId } from "./lib/routes.ts";
 import { useHealth } from "./lib/owner.ts";
 import { getChannel, type ChannelSummary } from "./lib/registry.ts";
 import { HomePage } from "./pages/HomePage.tsx";
@@ -53,10 +53,10 @@ function MenuButton(): React.JSX.Element {
   );
 }
 
-function MenuItems({ current }: { current: Route }): React.JSX.Element {
+function MenuItems({ routes, current }: { routes: readonly Route[]; current: Route }): React.JSX.Element {
   return (
     <SidebarMenu>
-      {ROUTES.map((route) => {
+      {routes.map((route) => {
         const Icon = route.icon;
         return (
           <SidebarMenuItem key={route.path}>
@@ -135,24 +135,19 @@ export function App(): React.JSX.Element {
           <SidebarContent>
             <SidebarGroup>
               <SidebarGroupLabel>Разделы</SidebarGroupLabel>
-              <MenuItems current={route} />
+              <MenuItems routes={MENU_ROUTES} current={route} />
             </SidebarGroup>
           </SidebarContent>
 
           <SidebarFooter>
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">
-              {canManage ? "Токен владельца принят" : "Управление — по токену"}
-            </div>
+            <MenuItems routes={FOOTER_ROUTES} current={route} />
           </SidebarFooter>
         </Sidebar>
 
         <SidebarInset>
           <header className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
             <MenuButton />
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-lg font-semibold">{route.title}</h1>
-              <p className="truncate text-xs text-muted-foreground">{route.summary}</p>
-            </div>
+            <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{route.title}</h1>
             {health !== undefined && (
               <Badge variant={health.status === "ok" ? "secondary" : "destructive"}>
                 {health.status === "ok" ? "работает" : "есть проблемы"}

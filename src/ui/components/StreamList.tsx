@@ -11,7 +11,6 @@ import { useEffect, useState } from "react";
 import { formatDuration } from "@/shared/time.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
 import { listStreams, type StreamSummary } from "../lib/registry.ts";
@@ -85,18 +84,18 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
         <h3 className="mb-2 text-sm font-medium text-muted-foreground">
           Разобрано ({ready.length})
         </h3>
-        <div className="space-y-2">
+        <ul className="divide-y">
           {ready.map((stream) => (
-            <Card key={stream.vodId}>
-              <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0">
-                <div>
-                  <CardTitle className="text-base">{stream.title || "Без названия"}</CardTitle>
+            <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="font-medium">{stream.title || "Без названия"}</p>
                   <p className="text-sm text-muted-foreground">
                     {formatDate(stream.publishedAt)} · {formatDuration(stream.durationSeconds)} · разделов:{" "}
                     {stream.sectionCount}
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex shrink-0 gap-2">
                   <Button size="sm" variant="secondary" onClick={() => onOpen(stream.vodId)}>
                     Открыть документ
                   </Button>
@@ -120,9 +119,9 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
                     </Button>
                   )}
                 </div>
-              </CardHeader>
+              </div>
               {stream.categories.length > 0 && (
-                <CardContent className="flex flex-wrap gap-1 pt-0">
+                <div className="flex flex-wrap gap-1">
                   {[...new Set(stream.categories.map((chapter) => chapter.title))]
                     .filter((title) => title !== "")
                     .map((title) => (
@@ -130,11 +129,11 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
                         {title}
                       </Badge>
                     ))}
-                </CardContent>
+                </div>
               )}
-            </Card>
+            </li>
           ))}
-        </div>
+        </ul>
       </section>
 
       {inProgress.length > 0 && (
@@ -142,18 +141,16 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
           <h3 className="mb-2 text-sm font-medium text-muted-foreground">
             В обработке ({inProgress.length})
           </h3>
-          <div className="space-y-2">
+          <ul className="divide-y">
             {inProgress.map((stream) => (
-              <Card key={stream.vodId}>
-                <CardHeader className="space-y-0">
-                  <CardTitle className="text-base">{stream.title || stream.vodId}</CardTitle>
-                  <p className="text-sm text-muted-foreground">
-                    {stream.status === "processing" ? "разбирается…" : `не удалось разобрать: ${stream.reason ?? ""}`}
-                  </p>
-                </CardHeader>
-              </Card>
+              <li key={stream.vodId} className="space-y-0.5 py-4 first:pt-0">
+                <p className="font-medium">{stream.title || stream.vodId}</p>
+                <p className="text-sm text-muted-foreground">
+                  {stream.status === "processing" ? "разбирается…" : `не удалось разобрать: ${stream.reason ?? ""}`}
+                </p>
+              </li>
             ))}
-          </div>
+          </ul>
         </section>
       )}
 
@@ -162,18 +159,14 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
           <h3 className="mb-2 text-sm font-medium text-muted-foreground">
             Пропущено ({skipped.length})
           </h3>
-          <div className="space-y-2">
+          <ul className="divide-y">
             {skipped.map((stream) => (
-              <Card key={stream.vodId} className="border-dashed">
-                <CardHeader className="space-y-0">
-                  <CardTitle className="text-base text-muted-foreground">
-                    {stream.title || stream.vodId}
-                  </CardTitle>
-                  <p className="text-sm text-muted-foreground">{stream.reason ?? "причина не указана"}</p>
-                </CardHeader>
-              </Card>
+              <li key={stream.vodId} className="space-y-0.5 py-4 first:pt-0">
+                <p className="font-medium text-muted-foreground">{stream.title || stream.vodId}</p>
+                <p className="text-sm text-muted-foreground">{stream.reason ?? "причина не указана"}</p>
+              </li>
             ))}
-          </div>
+          </ul>
         </section>
       )}
     </div>

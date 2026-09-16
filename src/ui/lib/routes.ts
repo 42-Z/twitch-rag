@@ -19,9 +19,9 @@ export interface Route {
   path: string;
   /** Название в меню и в заголовке страницы. */
   title: string;
-  /** О чём раздел — для подписи в шапке. */
-  summary: string;
   icon: LucideIcon;
+  /** Раздел, который стоит отдельно внизу меню. */
+  pin?: "bottom";
 }
 
 export const ROUTES: readonly Route[] = [
@@ -29,7 +29,6 @@ export const ROUTES: readonly Route[] = [
     id: "home",
     path: "/",
     title: "Главная",
-    summary: "Что это за сервис и в каком он состоянии",
     icon: Home,
   },
   {
@@ -39,31 +38,35 @@ export const ROUTES: readonly Route[] = [
     // обращаются именно туда, и менять этот адрес нельзя.
     path: "/assistant",
     title: "MCP",
-    summary: "Подключение базы знаний к ИИ-ассистенту",
     icon: Plug,
   },
   {
     id: "api",
     path: "/api",
     title: "API",
-    summary: "Запросы к базе знаний из своего кода",
     icon: Code,
   },
   {
     id: "knowledge",
     path: "/knowledge",
     title: "Знания",
-    summary: "Разобранные трансляции и их документы",
     icon: BookOpen,
   },
   {
     id: "manage",
     path: "/manage",
     title: "Управление",
-    summary: "Канал, добавление и удаление записей",
     icon: SlidersHorizontal,
+    // Управление — не про содержимое базы, поэтому стоит особняком внизу.
+    pin: "bottom",
   },
 ];
+
+/** Разделы меню сверху: всё, что показывает содержимое базы. */
+export const MENU_ROUTES: readonly Route[] = ROUTES.filter((route) => route.pin !== "bottom");
+
+/** Разделы, закреплённые внизу меню, — управление. */
+export const FOOTER_ROUTES: readonly Route[] = ROUTES.filter((route) => route.pin === "bottom");
 
 export interface Matched {
   route: Route;

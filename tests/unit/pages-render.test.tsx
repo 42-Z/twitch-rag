@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ROUTES, type RouteId } from "../../src/ui/lib/routes.ts";
+import { MENU_ROUTES, ROUTES, type RouteId } from "../../src/ui/lib/routes.ts";
 
 /**
  * Каждый раздел при открытии по своему адресу показывает своё содержимое.
@@ -26,9 +26,9 @@ const { App } = await import("../../src/ui/App.tsx");
 
 /** Что видно в разделе, когда данных ещё нет. */
 const MARKERS: Record<RouteId, string> = {
-  home: "Как это устроено",
-  mcp: "Что это даёт",
-  api: "Как обратиться",
+  home: "Сейчас в базе",
+  mcp: "Подключить ассистента",
+  api: "Ограничение частоты",
   knowledge: "Только чтение",
   manage: "Токен владельца",
 };
@@ -54,6 +54,22 @@ describe("разделы", () => {
     for (const route of ROUTES) {
       expect(html).toContain(`href="${route.path}"`);
     }
+  });
+
+  test("управление стоит внизу меню, после разделов с содержимым", () => {
+    const html = renderAt("/");
+    const manage = html.indexOf('href="/manage"');
+    expect(manage).toBeGreaterThan(-1);
+    for (const route of MENU_ROUTES) {
+      expect(html.indexOf(`href="${route.path}"`)).toBeLessThan(manage);
+    }
+  });
+
+  test("подписей с объяснением разделов в шапке нет", () => {
+    // Раздел назван в меню и в заголовке; пересказывать его назначение рядом
+    // с названием — лишний текст.
+    const html = renderAt("/");
+    expect(html).not.toContain("Что это за сервис");
   });
 
   test("содержимое одного раздела не показывается в другом", () => {

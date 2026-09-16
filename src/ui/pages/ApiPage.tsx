@@ -8,13 +8,11 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
 
 interface Endpoint {
   method: "GET" | "POST";
   path: string;
-  title: string;
   text: string;
   request?: string;
   response?: string;
@@ -58,33 +56,30 @@ function CodeBlock({ text }: { text: string }): React.JSX.Element {
   );
 }
 
-function EndpointCard({ endpoint }: { endpoint: Endpoint }): React.JSX.Element {
+function EndpointSection({ endpoint }: { endpoint: Endpoint }): React.JSX.Element {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-          <Badge variant="secondary" className="font-mono">
-            {endpoint.method}
-          </Badge>
-          <span className="font-mono text-sm">{endpoint.path}</span>
-        </CardTitle>
-        <p className="text-sm text-muted-foreground">{endpoint.text}</p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {endpoint.request !== undefined && (
-          <div className="space-y-1">
-            <p className="text-sm font-medium">Запрос</p>
-            <CodeBlock text={endpoint.request} />
-          </div>
-        )}
-        {endpoint.response !== undefined && (
-          <div className="space-y-1">
-            <p className="text-sm font-medium">Ответ</p>
-            <CodeBlock text={endpoint.response} />
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <section className="space-y-3 border-t pt-6">
+      <h2 className="flex flex-wrap items-center gap-2 text-base font-semibold">
+        <Badge variant="secondary" className="font-mono">
+          {endpoint.method}
+        </Badge>
+        <span className="font-mono text-sm font-normal">{endpoint.path}</span>
+      </h2>
+      <p className="text-sm text-muted-foreground">{endpoint.text}</p>
+
+      {endpoint.request !== undefined && (
+        <div className="space-y-1">
+          <p className="text-sm font-medium">Запрос</p>
+          <CodeBlock text={endpoint.request} />
+        </div>
+      )}
+      {endpoint.response !== undefined && (
+        <div className="space-y-1">
+          <p className="text-sm font-medium">Ответ</p>
+          <CodeBlock text={endpoint.response} />
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -95,7 +90,6 @@ export function ApiPage(): React.JSX.Element {
     {
       method: "POST",
       path: "/api/knowledge/search",
-      title: "Поиск по знаниям",
       text: "Главный запрос: вопрос словами, в ответ — разделы эфиров. Публичный, авторизация не нужна.",
       request: `curl -X POST ${origin}/api/knowledge/search \\
   -H 'content-type: application/json' \\
@@ -126,7 +120,6 @@ export function ApiPage(): React.JSX.Element {
     {
       method: "GET",
       path: "/api/knowledge/stats",
-      title: "Границы базы",
       text: "За какой срок есть сведения, сколько разобрано и сколько разделов. По этому ассистент честно говорит о пределах своих знаний.",
       response: `{
   "channel": "5opka",
@@ -140,7 +133,6 @@ export function ApiPage(): React.JSX.Element {
     {
       method: "GET",
       path: "/api/streams/{vodId}/document",
-      title: "Документ трансляции",
       text: "Документ целиком в разметке Markdown: заголовки разделов со временем и категорией.",
       request: `curl ${origin}/api/streams/2873255697/document`,
       response: `# РАССКАЗЫВАЮ ИСТОРИИ И ЧЁ-ТА ДЕЛАЮ // !донат !приватка !правила !funpay !tornado !тг
@@ -156,59 +148,50 @@ export function ApiPage(): React.JSX.Element {
   ];
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Как обратиться</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed">
-          <p>
-            Тела запросов и ответов — JSON в UTF-8, время — ISO 8601. Авторизация нужна только
-            для управления содержимым базы; поиск и чтение документов открыты всем.
-          </p>
-          <p className="text-muted-foreground">
-            Ограничение частоты — 30 запросов в минуту с одного адреса; при превышении приходит
-            ответ <span className="font-mono">429</span> с заголовком{" "}
-            <span className="font-mono">Retry-After</span>.
-          </p>
-        </CardContent>
-      </Card>
+    <div className="space-y-8">
+      <section className="space-y-3 text-sm leading-relaxed">
+        <p>
+          Тела запросов и ответов — JSON в UTF-8, время — ISO 8601. Авторизация нужна только
+          для управления содержимым базы; поиск и чтение документов открыты всем.
+        </p>
+        <p className="text-muted-foreground">
+          Ограничение частоты — 30 запросов в минуту с одного адреса; при превышении приходит
+          ответ <span className="font-mono">429</span> с заголовком{" "}
+          <span className="font-mono">Retry-After</span>.
+        </p>
+      </section>
 
       {endpoints.map((endpoint) => (
-        <EndpointCard key={endpoint.path} endpoint={endpoint} />
+        <EndpointSection key={endpoint.path} endpoint={endpoint} />
       ))}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Ошибки</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Любая ошибка приходит в одном виде — с кодом, текстом для человека и подсказкой:
-          </p>
-          <CodeBlock
-            text={`{
+      <section className="space-y-3 border-t pt-6">
+        <h2 className="text-lg font-semibold">Ошибки</h2>
+        <p className="text-sm text-muted-foreground">
+          Любая ошибка приходит в одном виде — с кодом, текстом для человека и подсказкой:
+        </p>
+        <CodeBlock
+          text={`{
   "error": {
     "code": "vod_unavailable",
     "message": "Запись недоступна: она удалена или открыта только подписчикам.",
     "hint": "Проверьте ссылку или добавьте другую запись."
   }
 }`}
-          />
-          <Separator />
-          <ul className="space-y-2 text-sm">
-            {ERROR_CODES.map((item) => (
-              <li key={item.code} className="flex flex-wrap items-baseline gap-2">
-                <code className="font-mono text-xs">{item.code}</code>
-                <Badge variant="outline" className="font-mono text-xs">
-                  {item.status}
-                </Badge>
-                <span className="text-muted-foreground">{item.text}</span>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
+        />
+        <Separator />
+        <ul className="space-y-2 text-sm">
+          {ERROR_CODES.map((item) => (
+            <li key={item.code} className="flex flex-wrap items-baseline gap-2">
+              <code className="font-mono text-xs">{item.code}</code>
+              <Badge variant="outline" className="font-mono text-xs">
+                {item.status}
+              </Badge>
+              <span className="text-muted-foreground">{item.text}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }
