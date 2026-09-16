@@ -40,6 +40,37 @@ bun run build          # интерфейс в dist
 wrangler deploy        # Worker, Workflow, статика
 ```
 
+**Автоматическая публикация (Workers Builds)** настраивается только в панели
+Cloudflare, из CLI или файла конфигурации её задать нельзя. Settings → Builds → Connect,
+далее значения:
+
+| Настройка | Значение |
+|-----------|----------|
+| Репозиторий и ветка | `42-Z/twitch-rag`, ветка `main` |
+| Build command | `bun run build` |
+| Deploy command | `npx wrangler deploy` (значение по умолчанию) |
+| Root directory | пусто — проект лежит в корне |
+| Build variables | `BUN_VERSION`, `BUN_PUBLIC_REGISTRY_URL`, `BUN_PUBLIC_REGISTRY_READONLY_TOKEN` |
+
+Публичные значения обязательны и неочевидны: они подставляются в сборку интерфейса, и
+локально их даёт `.env`, которого в сборочной среде нет. Без них `build.ts` не работает
+вовсе — он проверяет их наличие и останавливается с кодом 1, потому что иначе выложилась
+бы страница с нерабочим списком трансляций.
+
+`BUN_VERSION` обязателен по другой причине. В образе по умолчанию Bun 1.2.15, а файл
+блокировки пишет та версия, которой ставятся зависимости локально; 1.2.15 записи
+`lockfileVersion: 2` не понимает и падает на `bun install --frozen-lockfile`:
+
+```
+error: Unknown lockfile version
+UnknownLockfileVersion: failed to parse lockfile: 'bun.lock'
+error: lockfile had changes, but lockfile is frozen
+```
+
+Поэтому `BUN_VERSION` ДОЛЖЕН совпадать с версией Bun, которой собран `bun.lock`
+(сейчас `1.4.0`). При обновлении Bun на машине разработчика значение в настройках
+сборки нужно менять тем же шагом — иначе повторится тот же отказ.
+
 ## Проверка 0. Зависимости и доступы
 
 ```bash
