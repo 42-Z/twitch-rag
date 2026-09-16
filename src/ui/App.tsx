@@ -1,236 +1,196 @@
 /**
- * Страница владельца: состояние сервиса, список базы, управление и
- * инструкция подключения ассистента (US3).
+ * Каркас панели владельца: боковое меню и разделы со своими адресами.
  *
- * Асинхронные действия показывают загрузку, успех и ошибку явно (принцип
- * III); разметка не смещается после загрузки данных.
+ * Меню закрыто по умолчанию и открывается кнопкой с тремя полосками; на узком
+ * экране оно выезжает шторкой. Состояние сервиса и беды, о которых человеку
+ * нужно знать в любом разделе, показываются здесь же — в шапке и над
+ * содержимым.
  */
 
 import { useEffect, useState } from "react";
+import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
-import { Input } from "@/components/ui/input.tsx";
-import { Label } from "@/components/ui/label.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
-import { Separator } from "@/components/ui/separator.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
-import { StreamList } from "./components/StreamList.tsx";
-import { DocumentView } from "./components/DocumentView.tsx";
-import { McpSetup } from "./components/McpSetup.tsx";
+import { Separator } from "@/components/ui/separator.tsx";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  useSidebar,
+} from "@/components/ui/sidebar.tsx";
+import { TooltipProvider } from "@/components/ui/tooltip.tsx";
+import { Link, usePathname } from "./lib/router.tsx";
+import { matchRoute, ROUTES, type Route, type RouteId } from "./lib/routes.ts";
+import { useHealth } from "./lib/owner.ts";
 import { getChannel, type ChannelSummary } from "./lib/registry.ts";
-
-interface HealthReport {
-  status: "ok" | "degraded";
-  checks: Record<string, "ok" | "fail">;
-  /** Причина последнего сбоя опроса канала, если он был. */
-  lastCheckError?: string | null;
-}
+import { HomePage } from "./pages/HomePage.tsx";
+import { McpPage } from "./pages/McpPage.tsx";
+import { ApiPage } from "./pages/ApiPage.tsx";
+import { KnowledgePage } from "./pages/KnowledgePage.tsx";
+import { ManagePage } from "./pages/ManagePage.tsx";
 
 /**
- * Полная проверка состояния отвечает только владельцу: каждый её вызов — это
- * десяток обращений к внешним сервисам с крошечными квотами. Без токена
- * приходит признак жизни — «Worker отвечает», и проверок в нём нет.
+ * Кнопка меню. `SidebarTrigger` рисует собственную иконку панели, а нужен
+ * привычный значок из трёх полосок, поэтому переключатель берётся из
+ * состояния панели, а кнопка остаётся штатной.
  */
-function useHealth(adminToken: string): HealthReport | undefined {
-  const [health, setHealth] = useState<HealthReport | undefined>(undefined);
-  useEffect(() => {
-    let cancelled = false;
-    const headers: Record<string, string> = adminToken === "" ? {} : { Authorization: `Bearer ${adminToken}` };
-    fetch("/api/health", { headers })
-      .then((response) => response.json())
-      .then((data: HealthReport) => {
-        if (!cancelled) setHealth(data);
-      })
-      .catch(() => {
-        if (!cancelled) setHealth({ status: "degraded", checks: {} });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [adminToken]);
-  return health;
+function MenuButton(): React.JSX.Element {
+  const { toggleSidebar } = useSidebar();
+
+  return (
+    <Button variant="ghost" size="icon" aria-label="Открыть меню" onClick={toggleSidebar}>
+      <Menu className="size-5" />
+    </Button>
+  );
 }
 
-async function callOwnerApi(path: string, method: string, token: string, body?: unknown): Promise<unknown> {
-  const response = await fetch(path, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body === undefined ? {} : { "content-type": "application/json" }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const data = (await response.json().catch(() => ({}))) as { error?: { message: string } };
-  if (!response.ok) {
-    throw new Error(data.error?.message ?? `Запрос завершился с кодом ${response.status}.`);
-  }
-  return data;
+function MenuItems({ current }: { current: Route }): React.JSX.Element {
+  return (
+    <SidebarMenu>
+      {ROUTES.map((route) => {
+        const Icon = route.icon;
+        return (
+          <SidebarMenuItem key={route.path}>
+            <SidebarMenuButton asChild isActive={route.path === current.path} tooltip={route.title}>
+              <Link to={route.path}>
+                <Icon />
+                <span>{route.title}</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        );
+      })}
+    </SidebarMenu>
+  );
 }
 
 export function App(): React.JSX.Element {
+  const pathname = usePathname();
+  const { route, vodId } = matchRoute(pathname);
+
   const [adminToken, setAdminToken] = useState("");
-  const health = useHealth(adminToken);
+  const { health, tokenState } = useHealth(adminToken);
   const [channel, setChannel] = useState<ChannelSummary | undefined>(undefined);
-  const [channelLogin, setChannelLogin] = useState("");
-  const [streamUrl, setStreamUrl] = useState("");
-  const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | undefined>(undefined);
-  const [busy, setBusy] = useState<"channel" | "stream" | undefined>(undefined);
-  const [openDocument, setOpenDocument] = useState<string | undefined>(undefined);
   const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
-    getChannel().then(setChannel).catch(() => setChannel(undefined));
+    getChannel()
+      .then(setChannel)
+      .catch(() => setChannel(undefined));
   }, [refreshToken]);
 
-  async function handleSetChannel(event: React.FormEvent): Promise<void> {
-    event.preventDefault();
-    setBusy("channel");
-    setMessage(undefined);
-    try {
-      await callOwnerApi("/api/channel", "PUT", adminToken, { login: channelLogin });
-      setMessage({ kind: "success", text: `Канал «${channelLogin}» подключён.` });
-      setChannelLogin("");
-      setRefreshToken((n) => n + 1);
-    } catch (error) {
-      setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setBusy(undefined);
-    }
-  }
+  const canManage = tokenState === "valid";
+  const onChanged = (): void => setRefreshToken((n) => n + 1);
 
-  async function handleAddStream(event: React.FormEvent): Promise<void> {
-    event.preventDefault();
-    setBusy("stream");
-    setMessage(undefined);
-    try {
-      await callOwnerApi("/api/streams", "POST", adminToken, { url: streamUrl });
-      setMessage({ kind: "success", text: "Запись принята в обработку." });
-      setStreamUrl("");
-      setRefreshToken((n) => n + 1);
-    } catch (error) {
-      setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setBusy(undefined);
-    }
-  }
-
-  async function handleDeleteStream(vodId: string): Promise<void> {
-    await callOwnerApi(`/api/streams/${encodeURIComponent(vodId)}`, "DELETE", adminToken);
-  }
+  /**
+   * Страница каждого раздела. Набор объявлен как `Record<RouteId, …>`: пропущенный
+   * раздел или лишний ключ — ошибка сборки, а не пустая страница в браузере.
+   */
+  const pages: Record<RouteId, React.ReactNode> = {
+    home: <HomePage />,
+    mcp: <McpPage />,
+    api: <ApiPage />,
+    knowledge: (
+      <KnowledgePage
+        {...(vodId === undefined ? {} : { vodId })}
+        adminToken={adminToken}
+        canManage={canManage}
+        refreshToken={refreshToken}
+        onChanged={onChanged}
+      />
+    ),
+    manage: (
+      <ManagePage
+        adminToken={adminToken}
+        onTokenChange={setAdminToken}
+        tokenState={tokenState}
+        channel={channel}
+        onChanged={onChanged}
+      />
+    ),
+  };
 
   return (
-    <main className="mx-auto max-w-3xl space-y-8 px-4 py-8">
-      <header className="space-y-1">
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold">База знаний канала</h1>
-          {health !== undefined && (
-            <Badge variant={health.status === "ok" ? "secondary" : "destructive"}>
-              {health.status === "ok" ? "работает" : "есть проблемы"}
-            </Badge>
-          )}
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {channel === undefined ? "Канал пока не указан" : `Канал: ${channel.displayName}`}
-        </p>
-      </header>
+    <TooltipProvider>
+      <SidebarProvider defaultOpen={false}>
+        <Sidebar collapsible="offcanvas">
+          <SidebarHeader>
+            <div className="flex flex-col gap-0.5 px-2 py-1.5">
+              <span className="text-sm font-semibold">База знаний канала</span>
+              <span className="text-xs text-muted-foreground">
+                {channel === undefined ? "канал не указан" : channel.displayName}
+              </span>
+            </div>
+          </SidebarHeader>
 
-      {health !== undefined && health.status !== "ok" && (
-        <Alert variant="destructive">
-          <AlertTitle>Не всё готово к работе</AlertTitle>
-          <AlertDescription>
-            {Object.entries(health.checks)
-              .filter(([, value]) => value !== "ok")
-              .map(([name]) => name)
-              .join(", ") || "проверьте /api/health"}
-          </AlertDescription>
-        </Alert>
-      )}
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupLabel>Разделы</SidebarGroupLabel>
+              <MenuItems current={route} />
+            </SidebarGroup>
+          </SidebarContent>
 
-      {/* Опрос канала мог ни разу не пройти: тогда новые эфиры не появляются,
-          а причина нигде не видна — только здесь. */}
-      {health?.lastCheckError != null && (
-        <Alert variant="destructive">
-          <AlertTitle>Канал не опрашивается</AlertTitle>
-          <AlertDescription>{health.lastCheckError}</AlertDescription>
-        </Alert>
-      )}
+          <SidebarFooter>
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">
+              {canManage ? "Токен владельца принят" : "Управление — по токену"}
+            </div>
+          </SidebarFooter>
+        </Sidebar>
 
-      {openDocument !== undefined ? (
-        <DocumentView vodId={openDocument} onClose={() => setOpenDocument(undefined)} />
-      ) : (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle>Управление</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Действия владельца требуют токена — того же, что задан секретом{" "}
-                <code>APP_ADMIN_TOKEN</code>.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-1">
-                <Label htmlFor="admin-token">Токен владельца</Label>
-                <Input
-                  id="admin-token"
-                  type="password"
-                  value={adminToken}
-                  onChange={(event) => setAdminToken(event.target.value)}
-                  autoComplete="off"
-                />
-              </div>
+        <SidebarInset>
+          <header className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+            <MenuButton />
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-lg font-semibold">{route.title}</h1>
+              <p className="truncate text-xs text-muted-foreground">{route.summary}</p>
+            </div>
+            {health !== undefined && (
+              <Badge variant={health.status === "ok" ? "secondary" : "destructive"}>
+                {health.status === "ok" ? "работает" : "есть проблемы"}
+              </Badge>
+            )}
+          </header>
 
-              {message !== undefined && (
-                <p className={message.kind === "error" ? "text-sm text-destructive" : "text-sm text-emerald-600"}>
-                  {message.text}
-                </p>
-              )}
+          <main className="mx-auto w-full max-w-3xl flex-1 space-y-6 px-4 py-6">
+            {health !== undefined && health.status !== "ok" && (
+              <Alert variant="destructive">
+                <AlertTitle>Не всё готово к работе</AlertTitle>
+                <AlertDescription>
+                  {Object.entries(health.checks)
+                    .filter(([, value]) => value !== "ok")
+                    .map(([name]) => name)
+                    .join(", ") || "подробности — в разделе состояния"}
+                </AlertDescription>
+              </Alert>
+            )}
 
-              <form className="flex items-end gap-2" onSubmit={handleSetChannel}>
-                <div className="flex-1 space-y-1">
-                  <Label htmlFor="channel-login">Логин канала на Twitch</Label>
-                  <Input
-                    id="channel-login"
-                    value={channelLogin}
-                    onChange={(event) => setChannelLogin(event.target.value)}
-                    placeholder="examplechannel"
-                    required
-                  />
-                </div>
-                <Button type="submit" disabled={busy === "channel" || channelLogin === ""}>
-                  {busy === "channel" ? "Подключаю…" : "Указать канал"}
-                </Button>
-              </form>
+            {/* Опрос канала мог ни разу не пройти: тогда новые эфиры не
+                появляются, а причина видна только здесь. */}
+            {health?.lastCheckError != null && (
+              <Alert variant="destructive">
+                <AlertTitle>Канал не опрашивается</AlertTitle>
+                <AlertDescription>{health.lastCheckError}</AlertDescription>
+              </Alert>
+            )}
 
-              <form className="flex items-end gap-2" onSubmit={handleAddStream}>
-                <div className="flex-1 space-y-1">
-                  <Label htmlFor="stream-url">Адрес записи</Label>
-                  <Input
-                    id="stream-url"
-                    value={streamUrl}
-                    onChange={(event) => setStreamUrl(event.target.value)}
-                    placeholder="https://www.twitch.tv/videos/2345678901"
-                    required
-                  />
-                </div>
-                <Button type="submit" variant="secondary" disabled={busy === "stream" || streamUrl === ""}>
-                  {busy === "stream" ? "Добавляю…" : "Добавить вручную"}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+            {pages[route.id]}
 
-          <Separator />
-
-          <section>
-            <h2 className="mb-3 text-lg font-medium">Что знает база</h2>
-            <StreamList onOpen={setOpenDocument} onDelete={handleDeleteStream} refreshToken={refreshToken} />
-          </section>
-
-          <Separator />
-
-          <McpSetup />
-        </>
-      )}
-    </main>
+            <Separator />
+            <footer className="pb-2 text-xs text-muted-foreground">
+              Записи эфиров и расшифровки не хранятся — только документы и разделы в поиске.
+            </footer>
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }
