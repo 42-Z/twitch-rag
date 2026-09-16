@@ -5,6 +5,23 @@ import path from "node:path";
 // Сборка интерфейса средствами Bun: отдельный сборщик в стек не добавляется.
 // Результат кладётся в dist и раздаётся Cloudflare как статика.
 const outdir = path.join(process.cwd(), "dist");
+
+// Значения, без которых страница собирается нерабочей: список трансляций
+// читается из реестра прямо из браузера, и без адреса с токеном он не
+// откроется. Локально их даёт `.env`, а в сборочной среде они задаются
+// переменными сборки; забыть их — значит выложить сломанную страницу молча,
+// поэтому сборка без них не проходит.
+const REQUIRED_PUBLIC = ["BUN_PUBLIC_REGISTRY_URL", "BUN_PUBLIC_REGISTRY_READONLY_TOKEN"] as const;
+
+const missing = REQUIRED_PUBLIC.filter((name) => (process.env[name] ?? "") === "");
+if (missing.length > 0) {
+  console.error(
+    `Не заданы значения для страницы: ${missing.join(", ")}.\n` +
+      "Локально они лежат в `.env`, в сборочной среде — в переменных сборки.",
+  );
+  process.exit(1);
+}
+
 await rm(outdir, { recursive: true, force: true });
 
 // Публичные значения для страницы: адрес реестра и токен только на чтение.
