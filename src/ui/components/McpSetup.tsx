@@ -19,7 +19,7 @@ export function McpSetup(): React.JSX.Element {
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">Подключить ассистента</h2>
       <p className="text-sm text-muted-foreground">
-        Добавьте сервер в настройки MCP своего ИИ-ассистента. Авторизация не требуется.
+        Добавьте сервер в настройки MCP своего ИИ-ассистента.
       </p>
       <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 text-xs">
         <code>{config}</code>

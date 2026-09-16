@@ -72,9 +72,7 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
 
   if (streams.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Трансляций пока нет. Добавьте канал и первую запись, чтобы база начала расти.
-      </p>
+      <p className="text-sm text-muted-foreground">Трансляций пока нет.</p>
     );
   }
 

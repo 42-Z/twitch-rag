@@ -90,7 +90,7 @@ export function ApiPage(): React.JSX.Element {
     {
       method: "POST",
       path: "/api/knowledge/search",
-      text: "Главный запрос: вопрос словами, в ответ — разделы эфиров. Публичный, авторизация не нужна.",
+      text: "Вопрос словами, в ответ — разделы эфиров, ближайшие по смыслу.",
       request: `curl -X POST ${origin}/api/knowledge/search \\
   -H 'content-type: application/json' \\
   -d '{"query":"что говорили про Minecraft","topK":5}'`,
@@ -120,7 +120,7 @@ export function ApiPage(): React.JSX.Element {
     {
       method: "GET",
       path: "/api/knowledge/stats",
-      text: "За какой срок есть сведения, сколько разобрано и сколько разделов. По этому ассистент честно говорит о пределах своих знаний.",
+      text: "За какой срок есть сведения, сколько разобрано и сколько разделов.",
       response: `{
   "channel": "5opka",
   "streams": { "ready": 1, "skipped": 0 },
@@ -151,8 +151,8 @@ export function ApiPage(): React.JSX.Element {
     <div className="space-y-8">
       <section className="space-y-3 text-sm leading-relaxed">
         <p>
-          Тела запросов и ответов — JSON в UTF-8, время — ISO 8601. Авторизация нужна только
-          для управления содержимым базы; поиск и чтение документов открыты всем.
+          Тела запросов и ответов — JSON в UTF-8, время — ISO 8601. Токен нужен только для
+          управления содержимым базы; запросы ниже открыты всем.
         </p>
         <p className="text-muted-foreground">
           Ограничение частоты — 30 запросов в минуту с одного адреса; при превышении приходит

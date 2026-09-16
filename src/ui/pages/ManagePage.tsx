@@ -9,7 +9,6 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { callOwnerApi, TOKEN_HINT, type TokenState } from "../lib/owner.ts";
 import type { ChannelSummary } from "../lib/registry.ts";
@@ -64,8 +63,7 @@ export function ManagePage({
           {allowed && <Badge variant="secondary">принят</Badge>}
         </h2>
         <p className="text-sm text-muted-foreground">
-          Тот же токен, что задан секретом <code>APP_ADMIN_TOKEN</code>. Хранится только в
-          памяти страницы: после перезагрузки вводится заново, между разделами сохраняется.
+          После перезагрузки страницы токен нужно ввести заново.
         </p>
         <div className="space-y-1">
           <Label htmlFor="admin-token">Токен</Label>
@@ -136,8 +134,7 @@ export function ManagePage({
           <section className="space-y-3">
             <h2 className="text-lg font-semibold">Добавить запись вручную</h2>
             <p className="text-sm text-muted-foreground">
-              Обычно сервис находит новые эфиры сам раз в час. Вручную стоит добавлять то,
-              что появилось до подключения канала, или прошлые выпуски.
+              Новые эфиры сервис находит сам, раз в час. Вручную добавляйте прошлые выпуски.
             </p>
             <form
               className="flex items-end gap-2"
@@ -167,13 +164,9 @@ export function ManagePage({
             </form>
           </section>
 
-          <Alert>
-            <AlertTitle>Удаление — в разделе «Знания»</AlertTitle>
-            <AlertDescription>
-              Разобранную трансляцию можно удалить вместе с документом и разделами прямо из
-              списка: кнопка появляется, когда токен принят.
-            </AlertDescription>
-          </Alert>
+          <p className="text-sm text-muted-foreground">
+            Удаление разобранной трансляции — в разделе «Знания», рядом с ней самой.
+          </p>
         </>
       )}
     </div>

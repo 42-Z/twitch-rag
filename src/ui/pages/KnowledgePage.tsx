@@ -2,13 +2,13 @@
  * Раздел знаний: список разобранного и документ трансляции (FR-029…FR-031).
  *
  * Документ открывается по своему адресу — ссылку на разбор можно передать.
- * Удаление доступно только с верным токеном владельца (FR-037).
+ * Удаление доступно только с верным токеном владельца (FR-037), поэтому
+ * кнопка удаления появляется лишь тогда, когда токен принят: подсказок об
+ * этом на странице нет, читателю они ничего не меняют.
  */
 
 import { StreamList } from "../components/StreamList.tsx";
 import { DocumentView } from "../components/DocumentView.tsx";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
-import { Badge } from "@/components/ui/badge.tsx";
 import { navigate } from "../lib/router.tsx";
 import { knowledgeDocumentPath } from "../lib/routes.ts";
 
@@ -34,42 +34,23 @@ export function KnowledgePage({
     return <DocumentView vodId={vodId} onClose={() => navigate("/knowledge")} />;
   }
 
+  async function remove(vodId: string): Promise<void> {
+    const response = await fetch(`/api/streams/${encodeURIComponent(vodId)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { error?: { message: string } };
+      throw new Error(data.error?.message ?? `Удаление не прошло (код ${response.status}).`);
+    }
+    onChanged();
+  }
+
   return (
-    <div className="space-y-4">
-      {canManage ? (
-        <StreamList
-          onOpen={(id) => navigate(knowledgeDocumentPath(id))}
-          onDelete={async (id) => {
-            const response = await fetch(`/api/streams/${encodeURIComponent(id)}`, {
-              method: "DELETE",
-              headers: { Authorization: `Bearer ${adminToken}` },
-            });
-            if (!response.ok) {
-              const data = (await response.json().catch(() => ({}))) as { error?: { message: string } };
-              throw new Error(data.error?.message ?? `Удаление не прошло (код ${response.status}).`);
-            }
-            onChanged();
-          }}
-          refreshToken={refreshToken}
-        />
-      ) : (
-        <>
-          <Alert>
-            <AlertTitle className="flex items-center gap-2">
-              Только чтение
-              <Badge variant="secondary">без токена</Badge>
-            </AlertTitle>
-            <AlertDescription>
-              Список и документы открыты всем. Чтобы удалять записи, укажите токен владельца в
-              разделе «Управление».
-            </AlertDescription>
-          </Alert>
-          <StreamList
-            onOpen={(id) => navigate(knowledgeDocumentPath(id))}
-            refreshToken={refreshToken}
-          />
-        </>
-      )}
-    </div>
+    <StreamList
+      onOpen={(id) => navigate(knowledgeDocumentPath(id))}
+      {...(canManage ? { onDelete: remove } : {})}
+      refreshToken={refreshToken}
+    />
   );
 }

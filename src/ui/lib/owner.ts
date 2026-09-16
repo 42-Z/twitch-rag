@@ -105,7 +105,7 @@ export async function callOwnerApi(
 export const TOKEN_HINT: Record<TokenState, string> = {
   none: "Введите токен, чтобы управлять сервисом.",
   checking: "Проверяю токен…",
-  valid: "Токен принят — действия владельца доступны.",
-  invalid: "Токен не подошёл. Он задан секретом APP_ADMIN_TOKEN.",
+  valid: "Токен принят.",
+  invalid: "Токен не подошёл.",
   unreachable: "Сервис не ответил на проверку. Попробуйте ещё раз.",
 };

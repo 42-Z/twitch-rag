@@ -12,7 +12,6 @@ import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
-import { Separator } from "@/components/ui/separator.tsx";
 import {
   Sidebar,
   SidebarContent,
@@ -178,11 +177,6 @@ export function App(): React.JSX.Element {
             )}
 
             {pages[route.id]}
-
-            <Separator />
-            <footer className="pb-2 text-xs text-muted-foreground">
-              Записи эфиров и расшифровки не хранятся — только документы и разделы в поиске.
-            </footer>
           </main>
         </SidebarInset>
       </SidebarProvider>
