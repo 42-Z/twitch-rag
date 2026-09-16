@@ -10,6 +10,21 @@ import { createServices } from "../env.ts";
 
 type CheckName = "redis" | "vector" | "blob" | "r2" | "openrouter" | "twitch" | "box";
 
+/**
+ * Публичный ответ — только признак жизни, без единого обращения наружу.
+ *
+ * Так сделано не из экономии: у хранилища документов бесплатный тариф — две
+ * тысячи операций записи в месяц, у векторной базы — десять тысяч запросов в
+ * день, и при исчерпании они просто перестают отвечать до конца окна. Полная
+ * проверка на каждый чужой запрос превращала бы сервис в мишень: десяток
+ * обращений из одного запроса вычерпывал бы квоту за час, а ограничитель
+ * частоты у Cloudflare приблизительный и всплеск пропускает. Поэтому за
+ * токеном владельца — полная проверка, а без него — «Worker отвечает».
+ */
+export function handleHealthLiveness(): Response {
+  return Response.json({ status: "ok", checks: {} });
+}
+
 export async function handleHealth(env: Env): Promise<Response> {
   const services = createServices(env);
 
@@ -44,7 +59,7 @@ export async function handleHealth(env: Env): Promise<Response> {
       // Сбой опроса иначе нигде не виден: расписание пишет его в реестр, а
       // реестр в эту проверку не попадал — владелец узнавал о поломке лишь
       // по тому, что новые эфиры перестали появляться.
-      lastCheckError: channel?.lastCheckError ?? null,
+      lastCheckError: channel?.lastCheckError === undefined || channel.lastCheckError === "" ? null : channel.lastCheckError,
     },
     { status: degraded ? 503 : 200 },
   );

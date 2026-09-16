@@ -26,11 +26,17 @@ interface HealthReport {
   lastCheckError?: string | null;
 }
 
-function useHealth(): HealthReport | undefined {
+/**
+ * Полная проверка состояния отвечает только владельцу: каждый её вызов — это
+ * десяток обращений к внешним сервисам с крошечными квотами. Без токена
+ * приходит признак жизни — «Worker отвечает», и проверок в нём нет.
+ */
+function useHealth(adminToken: string): HealthReport | undefined {
   const [health, setHealth] = useState<HealthReport | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/health")
+    const headers: Record<string, string> = adminToken === "" ? {} : { Authorization: `Bearer ${adminToken}` };
+    fetch("/api/health", { headers })
       .then((response) => response.json())
       .then((data: HealthReport) => {
         if (!cancelled) setHealth(data);
@@ -41,7 +47,7 @@ function useHealth(): HealthReport | undefined {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [adminToken]);
   return health;
 }
 
@@ -62,9 +68,9 @@ async function callOwnerApi(path: string, method: string, token: string, body?: 
 }
 
 export function App(): React.JSX.Element {
-  const health = useHealth();
-  const [channel, setChannel] = useState<ChannelSummary | undefined>(undefined);
   const [adminToken, setAdminToken] = useState("");
+  const health = useHealth(adminToken);
+  const [channel, setChannel] = useState<ChannelSummary | undefined>(undefined);
   const [channelLogin, setChannelLogin] = useState("");
   const [streamUrl, setStreamUrl] = useState("");
   const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | undefined>(undefined);
@@ -142,7 +148,7 @@ export function App(): React.JSX.Element {
 
       {/* Опрос канала мог ни разу не пройти: тогда новые эфиры не появляются,
           а причина нигде не видна — только здесь. */}
-      {health?.lastCheckError != null && health.lastCheckError !== "" && (
+      {health?.lastCheckError != null && (
         <Alert variant="destructive">
           <AlertTitle>Канал не опрашивается</AlertTitle>
           <AlertDescription>{health.lastCheckError}</AlertDescription>

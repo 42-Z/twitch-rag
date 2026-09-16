@@ -10,7 +10,7 @@ import { errorResponse, AppError } from "../shared/errors.ts";
 import { enforceRateLimit, rateLimitHeaders } from "./ratelimit.ts";
 import type { Env } from "./env.ts";
 import { createServices } from "./env.ts";
-import { handleHealth } from "./routes/health.ts";
+import { handleHealth, handleHealthLiveness } from "./routes/health.ts";
 import { handleMcp } from "./mcp.ts";
 import { knowledgeStats, parseSearchRequest, searchKnowledge } from "./routes/knowledge.ts";
 import { handleIngestReady } from "./routes/internal.ts";
@@ -42,10 +42,11 @@ const ROUTES: Route[] = [
     method: "GET",
     pattern: "/api/health",
     handler: async (request, env) => {
-      // Проверка состояния дороже прочих путей: она делает несколько
-      // обращений к внешним сервисам и пробную запись в хранилище, то есть
-      // один чужой запрос превращается в добрый десяток исходящих. Без
-      // ограничителя это готовый рычаг для любого, кто узнал адрес.
+      // Полная проверка отвечает только владельцу: каждый её вызов — это
+      // десяток обращений к внешним сервисам и пробная запись в хранилище,
+      // а квоты у них крошечные (`routes/health.ts`). Без токена остаётся
+      // признак жизни, который не стоит ничего.
+      if (!isOwner(request, env)) return handleHealthLiveness();
       await enforceRateLimit(request, env, "health");
       return handleHealth(env);
     },
@@ -106,6 +107,17 @@ const ROUTES: Route[] = [
 
 function originOf(request: Request): string {
   return new URL(request.url).origin;
+}
+
+/**
+ * Владелец ли это. В отличие от `requireAdminToken`, отсутствие токена здесь
+ * не ошибка: полная проверка состояния просто не выполняется, а публичный
+ * ответ остаётся признаком жизни.
+ */
+function isOwner(request: Request, env: Env): boolean {
+  const header = request.headers.get("authorization") ?? "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  return token !== "" && token === env.APP_ADMIN_TOKEN;
 }
 
 async function readJson(request: Request): Promise<unknown> {
