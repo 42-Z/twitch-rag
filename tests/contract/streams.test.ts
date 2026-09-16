@@ -135,9 +135,9 @@ describe("POST /api/streams — ручное добавление", () => {
         services,
         "https://worker.example",
       );
-      throw new Error("ожидалась ошибка invalid_input");
+      throw new Error("ожидалась ошибка unauthorized");
     } catch (error) {
-      expect((error as AppError).code).toBe("invalid_input");
+      expect((error as AppError).code).toBe("unauthorized");
     }
   });
 });
@@ -223,9 +223,9 @@ describe("DELETE /api/streams/:vodId", () => {
     const { services } = servicesWith();
     try {
       await handleDeleteStream("2345678901", new Request("https://x"), envWith(), services);
-      throw new Error("ожидалась ошибка invalid_input");
+      throw new Error("ожидалась ошибка unauthorized");
     } catch (error) {
-      expect((error as AppError).code).toBe("invalid_input");
+      expect((error as AppError).code).toBe("unauthorized");
     }
   });
 });

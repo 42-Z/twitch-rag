@@ -14,7 +14,9 @@ export function requireAdminToken(request: Request, env: Env): void {
   const header = request.headers.get("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   if (token === "" || token !== env.APP_ADMIN_TOKEN) {
-    throw new AppError("invalid_input", "Нужен токен владельца в заголовке Authorization.", {
+    // Неверный токен — отказ в доступе, а не ошибка в запросе: страница
+    // владельца различает эти случаи и говорит человеку, что токен не подошёл.
+    throw new AppError("unauthorized", "Нужен токен владельца в заголовке Authorization.", {
       hint: "Authorization: Bearer <APP_ADMIN_TOKEN>",
     });
   }

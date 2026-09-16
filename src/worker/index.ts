@@ -19,6 +19,7 @@ import {
   handleDeleteStream,
   handleGetDocument,
   handleSetChannel,
+  requireAdminToken,
 } from "./routes/streams.ts";
 import { runScheduledCheck } from "./schedule.ts";
 
@@ -44,9 +45,13 @@ const ROUTES: Route[] = [
     handler: async (request, env) => {
       // Полная проверка отвечает только владельцу: каждый её вызов — это
       // десяток обращений к внешним сервисам и пробная запись в хранилище,
-      // а квоты у них крошечные (`routes/health.ts`). Без токена остаётся
-      // признак жизни, который не стоит ничего.
-      if (!isOwner(request, env)) return handleHealthLiveness();
+      // а квоты у них крошечные (`routes/health.ts`).
+      //
+      // Заголовка нет вовсе — отвечаем признаком жизни, который не стоит
+      // ничего. Заголовок есть, но токен не тот — явный отказ: страница
+      // владельца по нему отличает «токен не подошёл» от «ещё не вводил».
+      if (request.headers.get("authorization") === null) return handleHealthLiveness();
+      requireAdminToken(request, env);
       await enforceRateLimit(request, env, "health");
       return handleHealth(env);
     },
@@ -107,17 +112,6 @@ const ROUTES: Route[] = [
 
 function originOf(request: Request): string {
   return new URL(request.url).origin;
-}
-
-/**
- * Владелец ли это. В отличие от `requireAdminToken`, отсутствие токена здесь
- * не ошибка: полная проверка состояния просто не выполняется, а публичный
- * ответ остаётся признаком жизни.
- */
-function isOwner(request: Request, env: Env): boolean {
-  const header = request.headers.get("authorization") ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-  return token !== "" && token === env.APP_ADMIN_TOKEN;
 }
 
 async function readJson(request: Request): Promise<unknown> {

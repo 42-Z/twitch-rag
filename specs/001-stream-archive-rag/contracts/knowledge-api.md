@@ -24,7 +24,10 @@ ISO 8601 UTC, секунды — целые числа.
 ```
 
 Коды: `invalid_input`, `not_found`, `vod_unavailable`, `channel_not_set`,
-`already_processed`, `busy`, `upstream_unavailable`, `rate_limited`, `internal`.
+`unauthorized`, `already_processed`, `busy`, `upstream_unavailable`, `rate_limited`,
+`internal`. Отказ в доступе (`unauthorized`, 401) отделён от ошибки в запросе
+(`invalid_input`, 400): страница владельца по нему отличает «токен не подошёл» от
+«неверно заполнена форма».
 
 ## POST /api/knowledge/search
 
@@ -193,7 +196,9 @@ Worker проверяет секрет, создаёт инстанс обраб
 { "status": "ok", "checks": {} }
 ```
 
-Полная проверка — с токеном владельца в заголовке `Authorization`:
+Полная проверка — с токеном владельца в заголовке `Authorization`. Если заголовок
+передан, а токен не тот, приходит отказ `unauthorized` (401) — по нему страница
+владельца показывает, что токен не подошёл:
 
 ```json
 {

@@ -11,6 +11,7 @@ export type ErrorCode =
   | "vod_unavailable"
   | "channel_not_set"
   | "already_processed"
+  | "unauthorized"
   | "busy"
   | "upstream_unavailable"
   | "rate_limited"
@@ -22,6 +23,7 @@ const STATUS: Record<ErrorCode, number> = {
   vod_unavailable: 404,
   channel_not_set: 409,
   already_processed: 409,
+  unauthorized: 401,
   busy: 409,
   upstream_unavailable: 503,
   rate_limited: 429,
@@ -35,6 +37,7 @@ const HINT: Partial<Record<ErrorCode, string>> = {
   vod_unavailable: "Проверьте ссылку или добавьте другую запись.",
   channel_not_set: "Укажите отслеживаемый канал на странице сервиса.",
   already_processed: "Эта запись уже разобрана — её знания уже доступны.",
+  unauthorized: "Неверный токен владельца.",
   busy: "Эту запись сейчас разбирают. Дождитесь окончания разбора.",
   upstream_unavailable: "Внешний сервис недоступен. Попробуйте позже.",
   rate_limited: "Слишком много запросов. Подождите и повторите.",
