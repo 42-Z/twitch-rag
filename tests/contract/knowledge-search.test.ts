@@ -47,7 +47,7 @@ describe("разбор запроса знаний", () => {
   test("умолчания совпадают с контрактом", () => {
     const request = parseSearchRequest({ query: "про движок" });
     expect(request.topK).toBe(5);
-    expect(request.minScore).toBe(0.35);
+    expect(request.minScore).toBe(0.65);
   });
 
   test("пустой вопрос отвергается", () => {

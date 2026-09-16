@@ -12,6 +12,15 @@ import type { Services } from "../env.ts";
 import type { FoundSection } from "../../shared/knowledge.ts";
 import { MAX_QUERY_CHARS } from "../ratelimit.ts";
 
+/**
+ * Порог отсечения выдачи. Подобран измерением на живых данных: двадцать
+ * запросов ни о чём (рецепты, погода, курс биткоина) дали не больше 0.635,
+ * а запросы по теме — от 0.706. Прежнее значение 0.35 не отсекало ничего:
+ * посторонний вопрос получал пять разделов и выглядел отвеченным, то есть
+ * честный ответ «сведений нет» был недостижим вовсе (FR-024).
+ */
+const DEFAULT_MIN_SCORE = 0.65;
+
 const searchSchema = z.object({
   query: z.string().trim().min(1).max(MAX_QUERY_CHARS),
   topK: z.number().int().min(1).max(20).optional(),
@@ -61,7 +70,7 @@ export function parseSearchRequest(input: unknown): SearchRequest {
   return {
     query: value.query,
     topK: value.topK ?? 5,
-    minScore: value.minScore ?? 0.35,
+    minScore: value.minScore ?? DEFAULT_MIN_SCORE,
     ...(fromUnix === undefined ? {} : { fromUnix }),
     ...(toUnix === undefined ? {} : { toUnix }),
     ...(value.category === undefined || value.category === "" ? {} : { category: value.category }),
