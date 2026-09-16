@@ -42,12 +42,17 @@ export class BoxRunner {
     const url = requireHttpsUrl(input.url, "адрес записи");
     const callbackUrl = requireHttpsUrl(input.callbackUrl, "адрес обратного вызова");
 
+    // Журнал именуется по заходу, а не по записи: повторный запуск по той же
+    // записи не должен затирать след предыдущего — однажды именно так и
+    // пропали сведения о том, почему разбор пошёл двумя копиями.
+    const attempt = Date.now().toString(36);
+
     const command =
       `( node --env-file=${PIPELINE_ENV_PATH} ${PIPELINE_PATH}` +
       ` --vod '${vodId}'` +
       ` --url '${url}'` +
       ` --callback '${callbackUrl}'` +
-      ` > /workspace/home/ingest-${vodId}.log 2>&1 & )`;
+      ` > /workspace/home/ingest-${vodId}-${attempt}.log 2>&1 & )`;
 
     await this.withRetries(async () => {
       const box = await Box.get(this.config.boxId, { apiKey: this.config.apiKey });

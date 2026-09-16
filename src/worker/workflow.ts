@@ -10,13 +10,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import type { Env, IngestParams, Services } from "./env.ts";
 import { createServices } from "./env.ts";
-import {
-  mergeTranscripts,
-  shiftSegments,
-  prevailingLanguage,
-  formatDuration,
-  type TranscriptSegment,
-} from "../shared/time.ts";
+import { shiftSegments, prevailingLanguage, formatDuration } from "../shared/time.ts";
 import { vodUrlAt } from "../shared/time.ts";
 import { renderTranscript } from "../shared/openrouter.ts";
 import { planDocumentParts, assignCategories, uniqueCategories } from "../shared/categories.ts";
@@ -35,6 +29,16 @@ const CHARS_PER_PART = 60000;
 const EMBED_BATCH = 32;
 /** Разрыв больше этого означает пропущенный участок эфира, а не паузу в речи. */
 const MAX_COVERAGE_GAP_SECONDS = 300;
+
+/** Текст распознанного куска: живёт от распознавания до конца разбора. */
+const transcriptKey = (vodId: string, index: number): string =>
+  `transcript/${vodId}/chunk-${String(index).padStart(4, "0")}.txt`;
+
+/** Склеенная расшифровка всего эфира — то, что видят проходы составления. */
+const transcriptFullKey = (vodId: string): string => `transcript/${vodId}/full.txt`;
+
+/** Временное при разборе: удаляется вместе с аудио, каким бы ни был исход. */
+const TEMPORARY_PREFIXES = ["audio/", "transcript/"] as const;
 
 export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> {
   override async run(event: Readonly<WorkflowEvent<IngestParams>>, step: WorkflowStep): Promise<void> {
@@ -66,8 +70,12 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // Object при деплое), кусок в хранилище всё ещё на месте. `R2.delete`
     // отсутствующего ключа не ошибка, так что сам шаг удаления безопасно
     // повторить.
-    const perChunk: TranscriptSegment[][] = [];
     const languages: string[] = [];
+    // Сколько фраз нашлось в каждом куске: по нулю видно, что текста для него
+    // в хранилище и не должно быть.
+    const phrasesPerChunk: number[] = [];
+    let phraseCount = 0;
+    let speechSeconds = 0;
 
     for (const chunk of params.chunks) {
       const result = await step.do(`распознать кусок ${chunk.index}`, async () => {
@@ -82,9 +90,23 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
           filename: `chunk-${chunk.index}.m4a`,
         });
 
+        const segments = shiftSegments(transcription.segments, chunk.offsetSeconds);
+        // Текст расшифровки уходит в хранилище, а не в результат шага.
+        // Результаты шагов лежат в состоянии экземпляра, которое площадка
+        // держит три дня после разбора, а расшифровка не должна переживать
+        // разбор (FR-010). Возвращается только счёт: он крохотный и без
+        // самого текста ничего не выдаёт.
+        const text = renderTranscript(segments);
+        if (text !== "") {
+          await this.env.AUDIO.put(transcriptKey(params.vodId, chunk.index), text, {
+            httpMetadata: { contentType: "text/plain; charset=utf-8" },
+          });
+        }
+
         return {
           language: transcription.language,
-          segments: shiftSegments(transcription.segments, chunk.offsetSeconds),
+          phrases: segments.length,
+          speechSeconds: Math.round(segments.reduce((sum, segment) => sum + (segment.end - segment.start), 0)),
         };
       });
 
@@ -93,46 +115,68 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       });
 
       languages.push(result.language);
-      perChunk.push(result.segments);
+      phrasesPerChunk.push(result.phrases);
+      phraseCount += result.phrases;
+      speechSeconds += result.speechSeconds;
     }
 
     // Язык эфира — тот, на котором говорят в большинстве кусков, а не тот,
     // что выпал на первом.
     const language = prevailingLanguage(languages);
 
-    const transcript = mergeTranscripts(perChunk);
-    if (transcript.length === 0) {
+    if (phraseCount === 0) {
       await step.do("отметить эфир без речи", async () => {
         await services.registry.patchStream(params.vodId, {
           status: "skipped",
           reason: "В записи не распознано ни одной фразы.",
           processedAt: nowUnix(),
         });
-        await this.cleanupAudio(params.vodId);
+        await this.cleanupTemporary(params.vodId);
       });
       return;
     }
 
-    const transcriptText = renderTranscript(transcript);
-    const speechSeconds = transcript.reduce((sum, segment) => sum + (segment.end - segment.start), 0);
+    // Куски склеиваются в один текст отдельным шагом: каждому проходу
+    // составления нужна расшифровка целиком, а держать её в состоянии
+    // экземпляра нельзя. Читаются они по порядку — он же порядок эфира.
+    const transcriptChars = await step.do("склеить расшифровку", async () => {
+      const parts: string[] = [];
+      for (const [position, chunk] of params.chunks.entries()) {
+        // В куске без речи текста нет и быть не должно — это не пропажа.
+        if (phrasesPerChunk[position] === 0) continue;
+        const object = await this.env.AUDIO.get(transcriptKey(params.vodId, chunk.index));
+        if (object === null) throw new Error(`расшифровка куска ${chunk.index} исчезла из хранилища`);
+        parts.push(await object.text());
+      }
+      // Куски без речи дают пустую строку: в тексте им делать нечего, иначе
+      // на месте музыки и тишины появились бы пустые абзацы, которых в
+      // расшифровке целиком не было.
+      const text = parts.filter((part) => part !== "").join("\n");
+      await this.env.AUDIO.put(transcriptFullKey(params.vodId), text, {
+        httpMetadata: { contentType: "text/plain; charset=utf-8" },
+      });
+      return text.length;
+    });
 
     // --- составление документа ---
     // В каждом проходе модель получает расшифровку целиком, но пишет только
     // свой участок: иначе отсылки внутри эфира теряют смысл.
-    const partCount = Math.max(1, Math.ceil(transcriptText.length / CHARS_PER_PART));
+    const partCount = Math.max(1, Math.ceil(transcriptChars / CHARS_PER_PART));
     const parts = planDocumentParts(params.durationSeconds, params.categories, partCount);
 
     const written: ParsedSection[] = [];
     for (const [index, part] of parts.entries()) {
-      const composed = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () =>
-        await services.models.composeDocumentPart({
-          fullTranscript: transcriptText,
+      const composed = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () => {
+        const object = await this.env.AUDIO.get(transcriptFullKey(params.vodId));
+        if (object === null) throw new Error("склеенная расшифровка исчезла из хранилища");
+        return await services.models.composeDocumentPart({
+          fullTranscript: await object.text(),
           part,
           streamTitle: params.title,
           publishedAt: params.publishedAt,
           categories: params.categories,
-        }),
-      );
+        });
+      });
       written.push(...composed.map((section) => ({ ...section, category: "" })));
     }
 
@@ -208,27 +252,29 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       });
     });
 
-    await step.do("убрать временное аудио", async () => {
-      await this.cleanupAudio(params.vodId);
+    await step.do("убрать временные файлы разбора", async () => {
+      await this.cleanupTemporary(params.vodId);
     });
   }
 
   /**
-   * Уборка по префиксу: при любом исходе после разбора в хранилище не должно
-   * остаться ни одного куска этой записи.
+   * Уборка по префиксам: при любом исходе после разбора в хранилище не должно
+   * остаться ни кусков записи, ни расшифровки — ни целой, ни по частям.
    */
-  private async cleanupAudio(vodId: string): Promise<void> {
-    let cursor: string | undefined;
-    do {
-      const listed = await this.env.AUDIO.list({
-        prefix: `audio/${vodId}/`,
-        ...(cursor === undefined ? {} : { cursor }),
-      });
-      if (listed.objects.length > 0) {
-        await this.env.AUDIO.delete(listed.objects.map((object) => object.key));
-      }
-      cursor = listed.truncated ? listed.cursor : undefined;
-    } while (cursor !== undefined);
+  private async cleanupTemporary(vodId: string): Promise<void> {
+    for (const prefix of TEMPORARY_PREFIXES) {
+      let cursor: string | undefined;
+      do {
+        const listed = await this.env.AUDIO.list({
+          prefix: `${prefix}${vodId}/`,
+          ...(cursor === undefined ? {} : { cursor }),
+        });
+        if (listed.objects.length > 0) {
+          await this.env.AUDIO.delete(listed.objects.map((object) => object.key));
+        }
+        cursor = listed.truncated ? listed.cursor : undefined;
+      } while (cursor !== undefined);
+    }
   }
 }
 

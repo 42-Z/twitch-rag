@@ -1,5 +1,10 @@
 import { test, expect, describe } from "bun:test";
-import { handleAddStream, handleDeleteStream, requireAdminToken } from "../../src/worker/routes/streams.ts";
+import {
+  handleAddStream,
+  handleDeleteStream,
+  requireAdminToken,
+  startStreamIngest,
+} from "../../src/worker/routes/streams.ts";
 import { AppError } from "../../src/shared/errors.ts";
 import type { Env, Services } from "../../src/worker/env.ts";
 import type { StreamRecord } from "../../src/shared/registry.ts";
@@ -81,6 +86,72 @@ describe("защита токеном владельца", () => {
 
   test("верный токен проходит", () => {
     expect(() => requireAdminToken(request({ vodId: "1" }), envWith())).not.toThrow();
+  });
+});
+
+/** Запись в том или ином состоянии разбора; время начала разбора задаётся отдельно. */
+function streamRecord(overrides: Partial<StreamRecord>): StreamRecord {
+  return {
+    vodId: "2345678901",
+    status: "processing",
+    title: "Пятничный разбор кода",
+    url: "https://www.twitch.tv/videos/2345678901",
+    publishedAt: "2026-01-01T00:00:00Z",
+    publishedAtUnix: 1,
+    durationSeconds: 3600,
+    categories: [],
+    source: "auto",
+    attempts: 1,
+    ...overrides,
+  };
+}
+
+describe("повторный запуск разбора одной записи", () => {
+  // Второй конвейер по той же записи пишет куски в ту же папку бокса, что и
+  // первый: однажды так и случилось, и оба разбора испортили друг другу
+  // работу. Проверки у вызывающих есть, но защита обязана стоять и в самом
+  // запуске — иначе её обойдёт любой новый путь.
+  const NOW = Math.floor(Date.now() / 1000);
+
+  test("пока разбор идёт, второй не запускается и запись не переписывается", async () => {
+    const { services, puts, boxCalls } = servicesWith({
+      existing: streamRecord({ processedAt: NOW - 60 }),
+    });
+
+    const response = await handleAddStream(
+      request({ vodId: "2345678901" }),
+      envWith(),
+      services,
+      "https://worker.example",
+    );
+
+    expect(response.status).toBe(202);
+    expect(boxCalls).toHaveLength(0);
+    expect(puts).toHaveLength(0);
+  });
+
+  test("брошенный разбор (дольше суток) не мешает запустить заново", async () => {
+    const { services, boxCalls } = servicesWith({
+      existing: streamRecord({ processedAt: NOW - 25 * 60 * 60 }),
+    });
+
+    await handleAddStream(request({ vodId: "2345678901" }), envWith(), services, "https://worker.example");
+
+    expect(boxCalls).toHaveLength(1);
+  });
+
+  test("запуск отвергает занятую запись сам, а не полагается на вызывающих", async () => {
+    const { services, boxCalls } = servicesWith({
+      existing: streamRecord({ processedAt: NOW - 60 }),
+    });
+
+    try {
+      await startStreamIngest("2345678901", "auto", services, "https://worker.example");
+      throw new Error("ожидалась ошибка busy");
+    } catch (error) {
+      expect((error as AppError).code).toBe("busy");
+    }
+    expect(boxCalls).toHaveLength(0);
   });
 });
 

@@ -6,9 +6,21 @@
 
 import { z } from "zod";
 import { AppError } from "../../shared/errors.ts";
-import { isStale } from "../../shared/registry.ts";
+import { isStale, type StreamRecord } from "../../shared/registry.ts";
 import { skipReason } from "../../shared/twitch.ts";
 import type { Env, Services } from "../env.ts";
+
+/**
+ * Идёт ли по записи разбор прямо сейчас.
+ *
+ * Проверка нужна в двух местах и по одной причине: второй разбор той же
+ * записи запускать нельзя — два конвейера пишут куски в одну папку бокса и
+ * портят друг другу работу. Брошенная запись (в `processing` дольше суток)
+ * разбором не считается: её как раз и надо взять заново.
+ */
+export function isBusy(record: StreamRecord | undefined, nowUnix: number): boolean {
+  return record !== undefined && record.status === "processing" && !isStale(record, nowUnix);
+}
 
 export function requireAdminToken(request: Request, env: Env): void {
   const header = request.headers.get("authorization") ?? "";
@@ -56,7 +68,8 @@ export async function handleAddStream(
   if (existing !== undefined && existing.status === "ready") {
     throw new AppError("already_processed", "Эта запись уже разобрана.");
   }
-  if (existing !== undefined && existing.status === "processing") {
+  // Повторное добавление той же записи — не ошибка: она уже в работе.
+  if (isBusy(existing, Math.floor(Date.now() / 1000))) {
     return Response.json({ vodId, status: "processing" }, { status: 202 });
   }
 
@@ -75,6 +88,18 @@ export async function startStreamIngest(
   callbackBaseUrl: string,
   previousAttempts = 0,
 ): Promise<void> {
+  // Последняя защита перед запуском: она не зависит от того, кто позвал —
+  // расписание, ручное добавление или путь, которого ещё нет. Раньше проверка
+  // стояла только у вызывающих, и однажды разбор одной записи пошёл двумя
+  // копиями сразу: два конвейера качали эфир в одну папку и затирали друг
+  // другу куски, а журнал второй копии стёр след первой.
+  const current = await services.registry.getStream(vodId);
+  if (isBusy(current, Math.floor(Date.now() / 1000))) {
+    throw new AppError("busy", "Эта запись уже разбирается.", {
+      hint: "Дождитесь окончания разбора — второй запуск испортил бы работу первому.",
+    });
+  }
+
   const video = await services.twitch.getVideo(vodId);
   const reason = skipReason(video);
   if (reason !== undefined) {

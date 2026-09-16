@@ -4,7 +4,6 @@ import {
   toTwitchTimecode,
   vodUrlAt,
   formatClock,
-  parseClock,
   shiftSegments,
   mergeTranscripts,
   formatDuration,
@@ -48,16 +47,6 @@ describe("человекочитаемое время", () => {
   test("часы появляются только когда они есть", () => {
     expect(formatClock(4350)).toBe("1:12:30");
     expect(formatClock(750)).toBe("12:30");
-  });
-
-  test("разбор возвращает то же число", () => {
-    expect(parseClock("1:12:30")).toBe(4350);
-    expect(parseClock("12:30")).toBe(750);
-  });
-
-  test("мусор отвергается", () => {
-    expect(() => parseClock("1:2:3:4")).toThrow();
-    expect(() => parseClock("двенадцать")).toThrow();
   });
 });
 

@@ -60,15 +60,6 @@ export function formatClock(totalSeconds: number): string {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-/** Обратная операция к `formatClock`: `1:12:30` и `12:30` в секунды. */
-export function parseClock(clock: string): number {
-  const parts = clock.trim().split(":");
-  if (parts.length < 2 || parts.length > 3 || parts.some((p) => !/^\d+$/.test(p))) {
-    throw new Error(`Не удалось разобрать время: «${clock}»`);
-  }
-  return parts.reduce((total, part) => total * 60 + Number(part), 0);
-}
-
 export interface TranscriptSegment {
   start: number;
   end: number;

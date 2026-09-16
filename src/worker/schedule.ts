@@ -8,6 +8,7 @@
  */
 
 import type { Services } from "./env.ts";
+import { AppError } from "../shared/errors.ts";
 import { startStreamIngest } from "./routes/streams.ts";
 import { MAX_ATTEMPTS, isStale, type StreamRecord } from "../shared/registry.ts";
 import type { TwitchVideo } from "../shared/twitch.ts";
@@ -108,7 +109,15 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
     const next = selectNextVideo(videos, known, channel.watchFrom, nowUnix, liveStreamId);
     if (next !== undefined) {
       const previousAttempts = known.get(next.vodId)?.attempts ?? 0;
-      await startStreamIngest(next.vodId, "auto", services, callbackBaseUrl, previousAttempts);
+      try {
+        await startStreamIngest(next.vodId, "auto", services, callbackBaseUrl, previousAttempts);
+      } catch (error) {
+        // Разбор этой записи уже идёт — исход гонки, а не сбой проверки:
+        // отбор строится по реестру, прочитанному в начале, и запись могла
+        // начать разбираться за эти секунды. Отказ запуска — то, чего мы и
+        // хотели; в отчёт об ошибке опроса он попадать не должен.
+        if (!(error instanceof AppError) || error.code !== "busy") throw error;
+      }
     }
 
     await services.registry.recordCheck({ at: nowUnix });

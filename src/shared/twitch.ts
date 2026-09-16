@@ -68,15 +68,6 @@ export class Twitch {
     return { id: user.id, login: user.login, displayName: user.display_name };
   }
 
-  /** Записи прошедших эфиров, свежие первыми. */
-  async listArchiveVideos(userId: string, limit = 20, after?: string): Promise<TwitchVideo[]> {
-    const cursor = after === undefined ? "" : `&after=${encodeURIComponent(after)}`;
-    const data = await this.helix<{ data: RawVideo[]; pagination?: { cursor?: string } }>(
-      `/videos?user_id=${encodeURIComponent(userId)}&type=archive&first=${Math.min(limit, 100)}${cursor}`,
-    );
-    return data.data.map(toVideo);
-  }
-
   /**
    * Просмотр архива страницами: за один запуск берётся одна запись к разбору,
    * поэтому окно в одну страницу пропускало бы эфиры, появившиеся за время
