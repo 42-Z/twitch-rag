@@ -15,14 +15,23 @@ import type { TwitchVideo } from "../shared/twitch.ts";
 /**
  * Отбор одной записи к разбору из списка канала и текущего реестра.
  * Вынесено отдельно от сетевых вызовов, чтобы решение проверялось без них.
+ *
+ * `liveStreamId` — эфир, идущий прямо сейчас (`undefined`, если канал не в
+ * эфире). Площадка заводит запись архива в первые секунды трансляции, и та
+ * растёт до её конца; такая запись не берётся, иначе в базу попал бы обрывок,
+ * а сама запись, помеченная разобранной, больше не рассматривалась бы — и
+ * остаток эфира пропал бы навсегда.
  */
 export function selectNextVideo(
   videos: readonly TwitchVideo[],
   known: ReadonlyMap<string, StreamRecord>,
   watchFrom: number,
   nowUnix: number,
+  liveStreamId?: string,
 ): TwitchVideo | undefined {
   const candidates = videos.filter((video) => {
+    if (liveStreamId !== undefined && video.streamId === liveStreamId) return false;
+
     const record = known.get(video.vodId);
 
     if (record === undefined) {
@@ -91,7 +100,12 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
       stopAt: (video) => known.has(video.vodId),
     });
 
-    const next = selectNextVideo(videos, known, channel.watchFrom, nowUnix);
+    // Спрашивается до отбора: если эфир идёт, его растущую запись брать
+    // нельзя. Сбой этого запроса валит всю проверку — так задумано: принять
+    // обрывок за целый эфир хуже, чем пропустить час.
+    const liveStreamId = await services.twitch.getLiveStreamId(channel.twitchUserId);
+
+    const next = selectNextVideo(videos, known, channel.watchFrom, nowUnix, liveStreamId);
     if (next !== undefined) {
       const previousAttempts = known.get(next.vodId)?.attempts ?? 0;
       await startStreamIngest(next.vodId, "auto", services, callbackBaseUrl, previousAttempts);

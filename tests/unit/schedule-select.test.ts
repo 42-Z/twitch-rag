@@ -3,7 +3,7 @@ import { selectNextVideo, retireExhausted } from "../../src/worker/schedule.ts";
 import { MAX_ATTEMPTS, type StreamRecord } from "../../src/shared/registry.ts";
 import type { TwitchVideo } from "../../src/shared/twitch.ts";
 
-function video(vodId: string, publishedAtUnix: number): TwitchVideo {
+function video(vodId: string, publishedAtUnix: number, streamId = `stream-${vodId}`): TwitchVideo {
   return {
     vodId,
     title: `Стрим ${vodId}`,
@@ -11,6 +11,7 @@ function video(vodId: string, publishedAtUnix: number): TwitchVideo {
     publishedAt: new Date(publishedAtUnix * 1000).toISOString(),
     publishedAtUnix,
     durationSeconds: 3600,
+    streamId,
     viewable: "public",
     mutedSegments: [],
   };
@@ -90,6 +91,32 @@ describe("отбор записи к автоматическому разбор
 
   test("без кандидатов возвращается undefined — отсутствие новых записей не ошибка", () => {
     expect(selectNextVideo([], new Map(), 1800000000, NOW)).toBeUndefined();
+  });
+});
+
+describe("запись идущего эфира", () => {
+  // Площадка заводит запись архива в первые секунды трансляции, и та растёт
+  // до её конца. Взять такую запись — значит разобрать обрывок и навсегда
+  // закрыть себе остаток эфира: помеченная разобранной, она больше не
+  // рассматривается.
+  test("растущая запись идущего эфира не берётся", () => {
+    const videos = [video("1", 1900000000, "эфир-сейчас")];
+    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, "эфир-сейчас")).toBeUndefined();
+  });
+
+  test("запись законченного эфира берётся, пока идёт другой", () => {
+    const videos = [video("1", 1900000000, "эфир-прошлый")];
+    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, "эфир-сейчас")?.vodId).toBe("1");
+  });
+
+  test("из растущей и законченной берётся законченная", () => {
+    const videos = [video("2", 1950000000, "эфир-сейчас"), video("1", 1900000000, "эфир-прошлый")];
+    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, "эфир-сейчас")?.vodId).toBe("1");
+  });
+
+  test("канал не в эфире — берётся самая свежая запись", () => {
+    const videos = [video("1", 1900000000, "эфир-прошлый")];
+    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, undefined)?.vodId).toBe("1");
   });
 });
 

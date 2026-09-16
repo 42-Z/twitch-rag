@@ -37,6 +37,12 @@ export interface TwitchVideo {
   publishedAt: string;
   publishedAtUnix: number;
   durationSeconds: number;
+  /**
+   * Эфир, из которого выросла запись. Нужен, чтобы отличить запись
+   * законченного эфира от растущей записи идущего: площадка заводит её в
+   * первые же секунды трансляции.
+   */
+  streamId: string;
   /** `public` — доступна всем; иное значение означает ограниченный доступ. */
   viewable: string;
   /** Участки, заглушённые правообладателем: речи там нет. */
@@ -99,6 +105,20 @@ export class Twitch {
     }
 
     return collected;
+  }
+
+  /**
+   * Идентификатор идущего эфира канала либо `undefined`, если канал не в эфире.
+   *
+   * Площадка заводит запись архива сразу, как только начинается трансляция, и
+   * она растёт до конца эфира. По этому идентификатору такая запись отличается
+   * от записи законченного эфира: у той `streamId` указывает на прошлый эфир.
+   */
+  async getLiveStreamId(userId: string): Promise<string | undefined> {
+    const data = await this.helix<{ data: Array<{ id: string }> }>(
+      `/streams?user_id=${encodeURIComponent(userId)}`,
+    );
+    return data.data[0]?.id;
   }
 
   async getVideo(vodId: string): Promise<TwitchVideo> {
@@ -176,6 +196,7 @@ interface RawVideo {
   created_at: string;
   published_at?: string;
   duration: string;
+  stream_id?: string;
   viewable?: string;
   muted_segments?: Array<{ offset: number; duration: number }> | null;
 }
@@ -189,6 +210,7 @@ function toVideo(raw: RawVideo): TwitchVideo {
     publishedAt,
     publishedAtUnix: Math.floor(new Date(publishedAt).getTime() / 1000),
     durationSeconds: parseTwitchDuration(raw.duration),
+    streamId: raw.stream_id ?? "",
     viewable: raw.viewable ?? "public",
     mutedSegments: (raw.muted_segments ?? []).map((segment) => ({
       offsetSeconds: segment.offset,
