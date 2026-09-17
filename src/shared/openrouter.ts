@@ -153,7 +153,7 @@ export class OpenRouter {
  * трёх прогонах выдала `0:47:55`, `0:165` и голые секунды, и каждый раз разбор
  * терял вместе с непонятым заголовком часы эфира. В JSON число приходит числом.
  */
-const DOCUMENT_SYSTEM_PROMPT = `Ты составляешь документ о трансляции по её расшифровке.
+export const DOCUMENT_SYSTEM_PROMPT = `Ты составляешь документ о трансляции по её расшифровке.
 
 Ответ — только JSON такого вида, без markdown и пояснений вокруг:
 {"sections": [{"title": "Спор о правилах сервера", "startSeconds": 4040, "endSeconds": 4745, "text": "Текст раздела в несколько абзацев."}]}
@@ -169,7 +169,7 @@ const DOCUMENT_SYSTEM_PROMPT = `Ты составляешь документ о 
 8. Размер раздела — от нескольких абзацев; слишком мелкие темы объединяй.
 9. Никаких вступлений, заключений и обращений к читателю: в поле text только содержание раздела.`;
 
-function buildDocumentPrompt(request: DocumentPartRequest): string {
+export function buildDocumentPrompt(request: DocumentPartRequest): string {
   const categories = request.categories
     .map((category) => `- ${category.title}: ${category.startSeconds}–${category.endSeconds} с`)
     .join("\n");
