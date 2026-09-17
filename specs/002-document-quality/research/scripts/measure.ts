@@ -145,6 +145,13 @@ const variants: Variant[] = [
   { name: "C-с-объёмом", system: `${CANDIDATE_SYSTEM_PROMPT}\n${VOLUME_RULE}`, user: candidateUserPrompt() },
 ];
 
+/**
+ * Управление рассуждениями передаётся сырым JSON: каталог OpenRouter заявляет
+ * у нашей модели только `default_enabled`, без поддерживаемых значений, и
+ * проверять это приходится запросом, а не чтением каталога.
+ */
+const reasoning = arg("reasoning", "");
+
 async function chat(system: string, user: string, maxTokens: number, json = true): Promise<any> {
   const response = await fetch(API, {
     method: "POST",
@@ -153,6 +160,7 @@ async function chat(system: string, user: string, maxTokens: number, json = true
       model: MODEL,
       max_tokens: maxTokens,
       temperature: TEMPERATURE,
+      ...(reasoning === "" ? {} : { reasoning: JSON.parse(reasoning) }),
       ...(json ? { response_format: { type: "json_object" } } : {}),
       messages: [
         { role: "system", content: system },
