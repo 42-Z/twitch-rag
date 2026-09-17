@@ -21,12 +21,28 @@ export interface ChannelRecord {
   addedAt: number;
   lastCheckedAt?: number;
   lastCheckError?: string;
+  /**
+   * Сведения о стримере: кто это, о чём канал, кто постоянные собеседники,
+   * свои словечки. Свободный текст от владельца, уходит в системную
+   * инструкцию. Пустая строка и отсутствие поля равнозначны «не заполнено».
+   */
+  streamerInfo?: string;
 }
 
 export interface StreamRecord {
   vodId: string;
   status: StreamStatus;
+  /**
+   * Заголовок с площадки. Служебное поле: в разборе не участвует и нигде не
+   * показывается (FR-027), остаётся только чтобы опознать запись, у которой
+   * документа ещё нет.
+   */
   title: string;
+  /**
+   * Имя документа, выработанное по содержанию эфира. Заполняется вместе с
+   * разбором; у разобранной записи оно есть всегда (FR-022).
+   */
+  docTitle?: string;
   url: string;
   publishedAt: string;
   publishedAtUnix: number;
@@ -72,6 +88,10 @@ export class Registry {
   async getChannel(): Promise<ChannelRecord | undefined> {
     const raw = await this.call(() => this.redis.hgetall<Record<string, unknown>>(CHANNEL_KEY));
     if (raw === null || Object.keys(raw).length === 0) return undefined;
+    // Сведения о стримере живут в том же хеше и могут появиться раньше самого
+    // канала. Хеш без логина — это не подключённый канал, и опрос по нему
+    // уходил бы в площадку с пустым идентификатором.
+    if (asString(raw["login"]) === "") return undefined;
     return {
       twitchUserId: asString(raw["twitchUserId"]),
       login: asString(raw["login"]),
@@ -80,11 +100,32 @@ export class Registry {
       addedAt: asNumber(raw["addedAt"]),
       ...(raw["lastCheckedAt"] === undefined ? {} : { lastCheckedAt: asNumber(raw["lastCheckedAt"]) }),
       ...(raw["lastCheckError"] === undefined ? {} : { lastCheckError: asString(raw["lastCheckError"]) }),
+      ...(raw["streamerInfo"] === undefined ? {} : { streamerInfo: asString(raw["streamerInfo"]) }),
     };
   }
 
+  /**
+   * Поля перечислены поимённо, а не разложены из записи: сведения о стримере
+   * правятся отдельным действием, и подключение канала не должно их затирать.
+   */
   async setChannel(channel: ChannelRecord): Promise<void> {
-    await this.call(() => this.redis.hset(CHANNEL_KEY, { ...channel }));
+    await this.call(() =>
+      this.redis.hset(CHANNEL_KEY, {
+        twitchUserId: channel.twitchUserId,
+        login: channel.login,
+        displayName: channel.displayName,
+        watchFrom: channel.watchFrom,
+        addedAt: channel.addedAt,
+      }),
+    );
+  }
+
+  /**
+   * Сведения о стримере (FR-014). Пустая строка сохраняется как есть: это
+   * осознанное «сведений нет», а не отсутствие записи (FR-016).
+   */
+  async setStreamerInfo(info: string): Promise<void> {
+    await this.call(() => this.redis.hset(CHANNEL_KEY, { streamerInfo: info }));
   }
 
   /** Итог очередного опроса канала: отсутствие новых записей — не ошибка. */
@@ -123,6 +164,7 @@ export class Registry {
       attempts: record.attempts,
     };
     for (const [key, value] of Object.entries({
+      docTitle: record.docTitle,
       language: record.language,
       sectionCount: record.sectionCount,
       chunkCount: record.chunkCount,
@@ -294,6 +336,7 @@ function toStreamRecord(raw: Record<string, unknown>): StreamRecord {
     categories: asChapters(raw["categories"]),
     source: asString(raw["source"]) === "manual" ? "manual" : "auto",
     attempts: asNumber(raw["attempts"]),
+    ...defined("docTitle", optionalString(raw["docTitle"])),
     ...defined("language", optionalString(raw["language"])),
     ...defined("sectionCount", optionalNumber(raw["sectionCount"])),
     ...defined("chunkCount", optionalNumber(raw["chunkCount"])),

@@ -18,7 +18,10 @@ export interface Chapter {
 export interface StreamSummary {
   vodId: string;
   status: "processing" | "ready" | "skipped" | "failed";
+  /** Заголовок с площадки: служебное поле, показывается только у неразобранного. */
   title: string;
+  /** Имя документа, выработанное по содержанию эфира (FR-025). */
+  docTitle?: string;
   url: string;
   publishedAt: string;
   durationSeconds: number;
@@ -32,6 +35,8 @@ export interface ChannelSummary {
   displayName: string;
   lastCheckedAt?: number;
   lastCheckError?: string;
+  /** Сведения о стримере: заполняет владелец, уходят в системную инструкцию. */
+  streamerInfo?: string;
 }
 
 class RegistryUnavailableError extends Error {}
@@ -99,6 +104,7 @@ function toSummary(fields: string[]): StreamSummary | undefined {
       ? status
       : "failed",
     title: map.get("title") ?? "",
+    ...(map.get("docTitle") === undefined || map.get("docTitle") === "" ? {} : { docTitle: map.get("docTitle") }),
     url: map.get("url") ?? "",
     publishedAt: map.get("publishedAt") ?? "",
     durationSeconds: Number(map.get("durationSeconds") ?? 0),
@@ -136,5 +142,6 @@ export async function getChannel(): Promise<ChannelSummary | undefined> {
     ...(map.get("lastCheckError") === undefined || map.get("lastCheckError") === ""
       ? {}
       : { lastCheckError: map.get("lastCheckError") }),
+    ...(map.get("streamerInfo") === undefined ? {} : { streamerInfo: map.get("streamerInfo") }),
   };
 }

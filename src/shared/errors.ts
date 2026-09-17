@@ -13,7 +13,10 @@ export type ErrorCode =
   | "already_processed"
   | "unauthorized"
   | "busy"
+  | "reparse_running"
   | "upstream_unavailable"
+  | "model_refused"
+  | "output_truncated"
   | "rate_limited"
   | "internal";
 
@@ -25,7 +28,12 @@ const STATUS: Record<ErrorCode, number> = {
   already_processed: 409,
   unauthorized: 401,
   busy: 409,
+  reparse_running: 409,
   upstream_unavailable: 503,
+  // Оба отказа приходят от модели, а не от недоступности сервиса: 502
+  // говорит «ответ негоден», а не «попробуйте позже».
+  model_refused: 502,
+  output_truncated: 502,
   rate_limited: 429,
   internal: 500,
 };
@@ -39,7 +47,10 @@ const HINT: Partial<Record<ErrorCode, string>> = {
   already_processed: "Эта запись уже разобрана — её знания уже доступны.",
   unauthorized: "Неверный токен владельца.",
   busy: "Эту запись сейчас разбирают. Дождитесь окончания разбора.",
+  reparse_running: "Дождитесь окончания разбора — второй запуск испортил бы работу первому.",
   upstream_unavailable: "Внешний сервис недоступен. Попробуйте позже.",
+  model_refused: "Модель отказалась составлять документ. Попробуйте разобрать запись заново.",
+  output_truncated: "Ответ модели не поместился в потолок выхода — разбор повторится меньшим участком.",
   rate_limited: "Слишком много запросов. Подождите и повторите.",
   internal: "Если повторяется — загляните в журнал Worker.",
 };

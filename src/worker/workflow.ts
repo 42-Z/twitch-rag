@@ -1,5 +1,5 @@
 /**
- * Разбор записи: распознать → составить документ → проиндексировать.
+ * Разбор записи: распознать → составить документ → дать имя → проиндексировать.
  *
  * Оформлено шагами с независимыми повторами, а не одним длинным вызовом:
  * на семичасовой эфир приходится больше сорока кусков, и один вызов не прошёл
@@ -11,17 +11,13 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import type { Env, IngestParams, Services } from "./env.ts";
 import { createServices } from "./env.ts";
 import { shiftSegments, prevailingLanguage, formatDuration } from "../shared/time.ts";
-import { vodUrlAt } from "../shared/time.ts";
-import { renderTranscript } from "../shared/openrouter.ts";
+import { renderTranscript, type ComposedSection } from "../shared/openrouter.ts";
 import { planDocumentParts, assignCategories, uniqueCategories } from "../shared/categories.ts";
-import {
-  normalizeSections,
-  chunkSection,
-  buildContextLine,
-  type ParsedSection,
-} from "../shared/sections.ts";
+import { normalizeSections, type ParsedSection } from "../shared/sections.ts";
+import { buildChunks } from "../shared/chunks.ts";
 import { renderDocumentHeader, Documents } from "../shared/documents.ts";
-import type { ChunkToIndex } from "../shared/knowledge.ts";
+import { chunkId } from "../shared/knowledge.ts";
+import { AppError } from "../shared/errors.ts";
 
 /** Сколько знаков пересказа модель успевает выдать за один проход. */
 const CHARS_PER_PART = 60000;
@@ -29,6 +25,15 @@ const CHARS_PER_PART = 60000;
 const EMBED_BATCH = 32;
 /** Разрыв больше этого означает пропущенный участок эфира, а не паузу в речи. */
 const MAX_COVERAGE_GAP_SECONDS = 300;
+/**
+ * Короче этого участок не дробится при обрыве по потолку: дробить дальше
+ * нечего, а вызовы модели множатся. Ниже длины прохода с запасом вчетверо.
+ */
+const MIN_SPLIT_SECONDS = 300;
+/** Сколько раз допускается разделить участок, прежде чем признать обрыв отказом. */
+const MAX_SPLIT_DEPTH = 3;
+
+type Part = { startSeconds: number; endSeconds: number };
 
 /** Текст распознанного куска: живёт от распознавания до конца разбора. */
 const transcriptKey = (vodId: string, index: number): string =>
@@ -158,6 +163,12 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       return text.length;
     });
 
+    // Сведения о стримере читаются один раз на разбор: они уходят в системную
+    // инструкцию каждого прохода, и брать их заново незачем (FR-015).
+    const streamerInfo = await step.do("прочитать сведения о стримере", async () => {
+      return (await services.registry.getChannel())?.streamerInfo ?? "";
+    });
+
     // --- составление документа ---
     // В каждом проходе модель получает расшифровку целиком, но пишет только
     // свой участок: иначе отсылки внутри эфира теряют смысл.
@@ -169,12 +180,14 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       const composed = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () => {
         const object = await this.env.AUDIO.get(transcriptFullKey(params.vodId));
         if (object === null) throw new Error("склеенная расшифровка исчезла из хранилища");
-        return await services.models.composeDocumentPart({
-          fullTranscript: await object.text(),
+        return await composePart(services, {
+          transcript: await object.text(),
           part,
-          streamTitle: params.title,
-          publishedAt: params.publishedAt,
-          categories: params.categories,
+          params,
+          streamerInfo,
+          // Ключ закрепления за провайдером на всю запись: проходы одной
+          // записи должны попадать на тот же узел, иначе кэш входа не сработает.
+          sessionId: params.vodId,
         });
       });
       written.push(...composed.map((section) => ({ ...section, category: "" })));
@@ -194,18 +207,28 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     if (gaps.length > 0) {
       // Разрыв во времени означает пропущенный кусок эфира. Документ всё
       // равно сохраняется — терять разобранное из-за дыры нельзя, — но
-      // изъян попадает в реестр, а не остаётся незамеченным.
+      // изъян попадает в реестр, а не остаётся незамеченным (FR-040).
       console.warn(`разрывы покрытия по ${params.vodId}: ${JSON.stringify(gaps)}`);
     }
 
-    // --- индексация ---
-    const chunksToIndex = buildChunks(sections, params, language);
+    // --- имя документа ---
+    // Отдельным запросом по оглавлению (FR-041): имя нужно и в шапке
+    // документа, и в метаданных кусков, и в реестре, поэтому вырабатывается
+    // до индексации. Заголовок с площадки в запрос не идёт вовсе (FR-027).
+    const docTitle = await step.do("выработать имя документа", async () => {
+      return await services.models.composeDocumentName({
+        publishedAt: params.publishedAt,
+        sectionTitles: sections.map((section) => section.title),
+        sessionId: params.vodId,
+      });
+    });
 
-    // Повторный разбор делит эфир на разделы заново, и куски прошлого разбора
-    // не обязательно перезаписываются: их номера могут не совпасть. Без этой
-    // уборки в выдачу попадала бы смесь двух разборов одной записи.
-    await step.do("убрать разделы прошлого разбора", async () => {
-      return await services.knowledge.removeStream(params.vodId);
+    // --- индексация ---
+    const chunksToIndex = buildChunks({
+      sections,
+      stream: { vodId: params.vodId, publishedAt: params.publishedAt },
+      language,
+      docTitle,
     });
 
     for (let offset = 0; offset < chunksToIndex.length; offset += EMBED_BATCH) {
@@ -219,12 +242,24 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       });
     }
 
+    // Повторный разбор делит эфир на разделы заново, и куски прошлого разбора
+    // не обязательно перезаписываются: их номера могут не совпасть. Новые
+    // куски к этому моменту уже записаны, и убираются только те прежние,
+    // которых среди них нет: снести всё перед записью значило бы оставить
+    // трансляцию без знаний, если повтор не удастся (FR-032).
+    await step.do("убрать куски прошлого разбора", async () => {
+      const fresh = new Set(
+        chunksToIndex.map((chunk) => chunkId(chunk.vodId, chunk.sectionIndex, chunk.chunkIndex)),
+      );
+      return await services.knowledge.removeExcept(params.vodId, fresh);
+    });
+
     // --- документ и реестр ---
     // Состояние `ready` выставляется последним действием: до этого момента
     // запись не считается разобранной и будет взята заново.
     await step.do("сохранить документ", async () => {
       const header = renderDocumentHeader({
-        title: params.title,
+        name: docTitle,
         publishedAt: params.publishedAt,
         durationSeconds: params.durationSeconds,
         categories: uniqueCategories(params.categories),
@@ -238,6 +273,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     await step.do("отметить запись разобранной", async () => {
       await services.registry.patchStream(params.vodId, {
         status: "ready",
+        docTitle,
         language,
         sectionCount: sections.length,
         chunkCount: chunksToIndex.length,
@@ -275,6 +311,58 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
         cursor = listed.truncated ? listed.cursor : undefined;
       } while (cursor !== undefined);
     }
+  }
+}
+
+/**
+ * Проход составления с переигровкой на меньшем участке.
+ *
+ * Остановка по потолку означает неполный ответ, и повторять тот же запрос
+ * бессмысленно: причиной был размер ответа, а не случайность. Участок поэтому
+ * делится пополам, и каждая половина пишется отдельно. Отказ модели и
+ * недоступность сервиса так не лечатся — они уходят наверх как есть.
+ */
+async function composePart(
+  services: Services,
+  input: {
+    transcript: string;
+    part: Part;
+    params: IngestParams;
+    streamerInfo: string;
+    sessionId: string;
+  },
+  depth = 0,
+): Promise<ComposedSection[]> {
+  try {
+    return await services.models.composeDocumentPart({
+      fullTranscript: input.transcript,
+      part: input.part,
+      publishedAt: input.params.publishedAt,
+      categories: input.params.categories,
+      streamerInfo: input.streamerInfo,
+      sessionId: input.sessionId,
+    });
+  } catch (error) {
+    const span = input.part.endSeconds - input.part.startSeconds;
+    const splittable =
+      error instanceof AppError &&
+      error.code === "output_truncated" &&
+      depth < MAX_SPLIT_DEPTH &&
+      span >= MIN_SPLIT_SECONDS * 2;
+    if (!splittable) throw error;
+
+    const middle = Math.round(input.part.startSeconds + span / 2);
+    const first = await composePart(
+      services,
+      { ...input, part: { startSeconds: input.part.startSeconds, endSeconds: middle } },
+      depth + 1,
+    );
+    const second = await composePart(
+      services,
+      { ...input, part: { startSeconds: middle, endSeconds: input.part.endSeconds } },
+      depth + 1,
+    );
+    return [...first, ...second];
   }
 }
 
@@ -328,7 +416,7 @@ function formatRange(section: ParsedSection): string {
   return section.category === "" ? range : `${range} · ${section.category}`;
 }
 
-/** Участки эфира, не покрытые ни одним разделом (FR-019). */
+/** Участки эфира, не покрытые ни одним разделом (FR-040). */
 export function findCoverageGaps(
   sections: readonly ParsedSection[],
   durationSeconds: number,
@@ -349,44 +437,3 @@ export function findCoverageGaps(
   return gaps;
 }
 
-/** Разделы превращаются в куски с контекстной строкой и метаданными для выдачи. */
-export function buildChunks(
-  sections: readonly ParsedSection[],
-  params: IngestParams,
-  language: string,
-): Array<Omit<ChunkToIndex, "vector">> {
-  const result: Array<Omit<ChunkToIndex, "vector">> = [];
-
-  sections.forEach((section, sectionIndex) => {
-    const contextLine = buildContextLine({
-      publishedAt: params.publishedAt,
-      category: section.category,
-      sectionTitle: section.title,
-    });
-
-    for (const chunk of chunkSection(section, contextLine)) {
-      result.push({
-        vodId: params.vodId,
-        sectionIndex,
-        chunkIndex: chunk.chunkIndex,
-        data: chunk.text,
-        metadata: {
-          vodId: params.vodId,
-          title: params.title,
-          publishedAt: params.publishedAt,
-          publishedAtUnix: Math.floor(new Date(params.publishedAt).getTime() / 1000),
-          category: section.category,
-          sectionIndex,
-          sectionTitle: section.title,
-          sectionText: section.text,
-          startSeconds: section.startSeconds,
-          endSeconds: section.endSeconds,
-          url: vodUrlAt(params.vodId, section.startSeconds),
-          language,
-        },
-      });
-    }
-  });
-
-  return result;
-}

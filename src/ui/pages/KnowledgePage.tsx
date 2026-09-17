@@ -34,14 +34,24 @@ export function KnowledgePage({
     return <DocumentView vodId={vodId} onClose={() => navigate("/knowledge")} />;
   }
 
-  async function remove(vodId: string): Promise<void> {
-    const response = await fetch(`/api/streams/${encodeURIComponent(vodId)}`, {
-      method: "DELETE",
+  /**
+   * Управляющее действие над трансляцией. Отказ приходит телом контракта, и
+   * текст из него показывается человеку: у отказа может быть своя причина —
+   * «разбор уже идёт», — которую по коду состояния не угадать.
+   */
+  async function act(vodId: string, action: "remove" | "reparse"): Promise<void> {
+    const path =
+      action === "remove"
+        ? `/api/streams/${encodeURIComponent(vodId)}`
+        : `/api/streams/${encodeURIComponent(vodId)}/reparse`;
+    const response = await fetch(path, {
+      method: action === "remove" ? "DELETE" : "POST",
       headers: { Authorization: `Bearer ${adminToken}` },
     });
     if (!response.ok) {
       const data = (await response.json().catch(() => ({}))) as { error?: { message: string } };
-      throw new Error(data.error?.message ?? `Удаление не прошло (код ${response.status}).`);
+      const fallback = action === "remove" ? "Удаление не прошло" : "Повторный разбор не запустился";
+      throw new Error(data.error?.message ?? `${fallback} (код ${response.status}).`);
     }
     onChanged();
   }
@@ -49,7 +59,12 @@ export function KnowledgePage({
   return (
     <StreamList
       onOpen={(id) => navigate(knowledgeDocumentPath(id))}
-      {...(canManage ? { onDelete: remove } : {})}
+      {...(canManage
+        ? {
+            onDelete: (id: string) => act(id, "remove"),
+            onReparse: (id: string) => act(id, "reparse"),
+          }
+        : {})}
       refreshToken={refreshToken}
     />
   );

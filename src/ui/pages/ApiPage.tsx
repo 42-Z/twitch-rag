@@ -105,7 +105,7 @@ export function ApiPage(): React.JSX.Element {
       "category": "Minecraft",
       "stream": {
         "vodId": "2873255697",
-        "title": "РАССКАЗЫВАЮ ИСТОРИИ И ЧЁ-ТА ДЕЛАЮ // !донат !приватка !правила !funpay !tornado !тг",
+        "title": "Спор о вайпкодинге и сервер на Mineflayer",
         "publishedAt": "2026-09-13T16:32:54.000Z",
         "url": "https://www.twitch.tv/videos/2873255697?t=2h41m40s"
       },
@@ -133,9 +133,9 @@ export function ApiPage(): React.JSX.Element {
     {
       method: "GET",
       path: "/api/streams/{vodId}/document",
-      text: "Документ целиком в разметке Markdown: заголовки разделов со временем и категорией.",
+      text: "Документ целиком в разметке Markdown: имя документа, заголовки разделов со временем и категорией.",
       request: `curl ${origin}/api/streams/2873255697/document`,
-      response: `# РАССКАЗЫВАЮ ИСТОРИИ И ЧЁ-ТА ДЕЛАЮ // !донат !приватка !правила !funpay !tornado !тг
+      response: `# Спор о вайпкодинге и сервер на Mineflayer
 
 **Эфир**: 2026-09-13 · **Длительность**: 5 ч 17 мин
 

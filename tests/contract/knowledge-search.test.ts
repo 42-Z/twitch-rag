@@ -5,6 +5,7 @@ import {
   NO_KNOWLEDGE_MESSAGE,
 } from "../../src/worker/routes/knowledge.ts";
 import { buildFilter } from "../../src/shared/knowledge.ts";
+import { buildChunks } from "../../src/shared/chunks.ts";
 import { AppError } from "../../src/shared/errors.ts";
 import type { Services } from "../../src/worker/env.ts";
 import type { FoundSection, SearchOptions } from "../../src/shared/knowledge.ts";
@@ -113,6 +114,47 @@ describe("ответ на запрос знаний", () => {
     expect(seen[0]?.topK).toBe(3);
     expect(seen[0]?.category).toBe("Just Chatting");
     expect(seen[0]?.fromUnix).toBeDefined();
+  });
+});
+
+describe("имя документа в выдаче", () => {
+  /**
+   * Поле `stream.title` в ответе несёт имя документа, выработанное по
+   * содержанию эфира, а не заголовок трансляции с площадки (FR-025, FR-027).
+   * Решается это при сборке кусков: выдача читает метаданные как есть, и
+   * другого места, где подставлялось бы имя, у неё нет.
+   */
+  const built = buildChunks({
+    sections: [
+      { title: "Выборы и «Новые люди»", text: "Текст раздела.", startSeconds: 4350, endSeconds: 4720, category: "Just Chatting" },
+    ],
+    stream: { vodId: "2345678901", publishedAt: "2026-03-14T18:03:00Z" },
+    language: "ru",
+    docTitle: "Как разыграли зрителей треком на час",
+  });
+
+  test("метаданные куска несут имя документа", () => {
+    expect(built).toHaveLength(1);
+    expect(built[0]?.metadata.title).toBe("Как разыграли зрителей треком на час");
+  });
+
+  test("заголовка с площадки в кусках нет ни в одном поле", () => {
+    const platformTitle = "🔴 СТРИМ! Заходи, тут интересно #twitch";
+    const fields = JSON.stringify(built.map((chunk) => chunk.metadata));
+
+    expect(fields).not.toContain(platformTitle);
+    expect(fields).not.toContain("#twitch");
+  });
+
+  test("в ответе стоит то же имя, что в метаданных", async () => {
+    const name = built[0]?.metadata.title ?? "";
+    const { services } = servicesWith([
+      { ...section, stream: { vodId: "2345678901", title: name, publishedAt: "2026-03-14T18:03:00Z", url: "https://x?t=1" } },
+    ]);
+
+    const result = await searchKnowledge(parseSearchRequest({ query: "выборы" }), services);
+
+    expect(result.documents[0]?.stream.title).toBe("Как разыграли зрителей треком на час");
   });
 });
 

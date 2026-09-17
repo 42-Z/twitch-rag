@@ -17,6 +17,7 @@ import { DATE_PATTERN } from "./routes/knowledge.ts";
 import type { Env } from "./env.ts";
 import { createServices } from "./env.ts";
 import { formatClock } from "../shared/time.ts";
+import { documentName } from "../shared/document-name.ts";
 import {
   knowledgeStats,
   parseSearchRequest,
@@ -101,7 +102,7 @@ export function createMcpServer(env: Env): McpServer {
     "list_streams",
     {
       description:
-        "Перечислить разобранные трансляции с датами и категориями. Использовать, когда вопрос касается конкретного эфира или периода, а не темы.",
+        "Перечислить разобранные трансляции с именами документов, датами и категориями. Имя документа выработано по содержанию эфира. Использовать, когда вопрос касается конкретного эфира или периода, а не темы.",
       inputSchema: {
         from: z.string().regex(DATE_PATTERN, "Ожидается дата вида ГГГГ-ММ-ДД").optional().describe("Не раньше этой даты эфира, ГГГГ-ММ-ДД"),
         to: z.string().regex(DATE_PATTERN, "Ожидается дата вида ГГГГ-ММ-ДД").optional().describe("Не позже этой даты эфира, ГГГГ-ММ-ДД"),
@@ -120,7 +121,7 @@ export function createMcpServer(env: Env): McpServer {
       const lines = ready.map((stream) => {
         const categories = stream.categories.map((chapter) => chapter.title).join(", ");
         const duration = formatClock(stream.durationSeconds);
-        return `${stream.publishedAt.slice(0, 10)} · «${stream.title}» · ${duration} · разделов: ${stream.sectionCount ?? 0}${categories === "" ? "" : ` · ${categories}`}`;
+        return `${stream.publishedAt.slice(0, 10)} · «${documentName(stream)}» · ${duration} · разделов: ${stream.sectionCount ?? 0}${categories === "" ? "" : ` · ${categories}`}`;
       });
 
       return {
@@ -130,7 +131,7 @@ export function createMcpServer(env: Env): McpServer {
         structuredContent: {
           streams: ready.map((stream) => ({
             vodId: stream.vodId,
-            title: stream.title,
+            title: documentName(stream),
             publishedAt: stream.publishedAt,
             durationSeconds: stream.durationSeconds,
             categories: stream.categories.map((chapter) => chapter.title),

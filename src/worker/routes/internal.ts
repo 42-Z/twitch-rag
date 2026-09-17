@@ -102,9 +102,10 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
 
   const existing = await services.registry.getStream(payload.vodId);
 
+  // Заголовок из сигнала бокса в разбор не передаётся: он не участвует ни в
+  // документе, ни в имени (FR-027) и остаётся служебным полем реестра.
   const params: IngestParams = {
     vodId: payload.vodId,
-    title: payload.title,
     url: `https://www.twitch.tv/videos/${payload.vodId}`,
     publishedAt: payload.publishedAt,
     durationSeconds: payload.durationSeconds,

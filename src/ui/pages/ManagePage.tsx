@@ -1,17 +1,23 @@
 /**
- * Раздел управления: канал и добавление записей.
+ * Раздел управления: отслеживаемый канал, сведения о стримере и добавление
+ * записей вручную.
  *
  * Пока токен не предъявлен и не проверен, видно только поле токена и
  * пояснение — остальные поля ввода скрыты (FR-037).
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
+import { Textarea } from "@/components/ui/textarea.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { callOwnerApi, TOKEN_HINT, type TokenState } from "../lib/owner.ts";
 import type { ChannelSummary } from "../lib/registry.ts";
+
+/** Пример заполнения: показывает, чего от поля ждут, лучше любого пояснения. */
+const STREAMER_INFO_EXAMPLE =
+  "5opka — Михаил, стримит истории из жизни и разборки с чатом. Постоянные собеседники: Соня, Влад, Мафаня.";
 
 interface ManagePageProps {
   adminToken: string;
@@ -30,13 +36,25 @@ export function ManagePage({
 }: ManagePageProps): React.JSX.Element {
   const [channelLogin, setChannelLogin] = useState("");
   const [streamUrl, setStreamUrl] = useState("");
-  const [busy, setBusy] = useState<"channel" | "stream" | undefined>(undefined);
-  const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | undefined>(undefined);
+  const [streamerInfo, setStreamerInfo] = useState("");
+  const [busy, setBusy] = useState<"channel" | "stream" | "streamer" | undefined>(undefined);
+  /** Итог действия помнит, какая форма его вызвала: подпись показывается там же, где нажимали. */
+  const [message, setMessage] = useState<
+    { what: "channel" | "stream" | "streamer"; kind: "success" | "error"; text: string } | undefined
+  >(undefined);
 
   const allowed = tokenState === "valid";
 
+  // Поле показывает то, что лежит в реестре: страница читает канал сама, и
+  // после сохранения или перезагрузки значение приходит оттуда, а не из
+  // памяти формы.
+  const savedStreamerInfo = channel?.streamerInfo ?? "";
+  useEffect(() => {
+    setStreamerInfo(savedStreamerInfo);
+  }, [savedStreamerInfo]);
+
   async function submit(
-    what: "channel" | "stream",
+    what: "channel" | "stream" | "streamer",
     action: () => Promise<unknown>,
     success: string,
     reset: () => void,
@@ -45,14 +63,24 @@ export function ManagePage({
     setMessage(undefined);
     try {
       await action();
-      setMessage({ kind: "success", text: success });
+      setMessage({ what, kind: "success", text: success });
       reset();
       onChanged();
     } catch (error) {
-      setMessage({ kind: "error", text: error instanceof Error ? error.message : String(error) });
+      setMessage({ what, kind: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
       setBusy(undefined);
     }
+  }
+
+  /** Подпись об исходе действия — рядом с кнопкой, а не в шапке страницы. */
+  function outcome(what: "channel" | "stream" | "streamer"): React.JSX.Element | null {
+    if (message === undefined || message.what !== what) return null;
+    return (
+      <p className={message.kind === "error" ? "text-sm text-destructive" : "text-sm text-emerald-600"}>
+        {message.text}
+      </p>
+    );
   }
 
   return (
@@ -86,12 +114,6 @@ export function ManagePage({
         >
           {TOKEN_HINT[tokenState]}
         </p>
-
-        {message !== undefined && (
-          <p className={message.kind === "error" ? "text-sm text-destructive" : "text-sm text-emerald-600"}>
-            {message.text}
-          </p>
-        )}
       </section>
 
       {allowed && (
@@ -129,7 +151,61 @@ export function ManagePage({
                 {busy === "channel" ? "Подключаю…" : "Указать канал"}
               </Button>
             </form>
+            {outcome("channel")}
           </section>
+
+          {/* Сведения относятся к отслеживаемому каналу и живут в его записи:
+              без канала их негде хранить, и заполненное поле пропало бы при
+              перезагрузке. Отслеживаемый канал выше объясняет своё состояние. */}
+          {channel !== undefined && (
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">О стримере</h2>
+              <p className="text-sm text-muted-foreground">
+                Эти сведения уходят в инструкцию, по которой составляется документ. Из них разбор узнаёт,
+                как на самом деле зовут участников и что означают словечки канала, — без них имена
+                распознаются как случайный набор звуков.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Пишите коротко: кто это, о чём канал, кто постоянные собеседники, какие на канале свои
+                словечки. Пустое поле — сведений нет, разбор идёт как обычно.
+              </p>
+              <form
+                className="space-y-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submit(
+                    "streamer",
+                    () => callOwnerApi("/api/streamer", "PUT", adminToken, { info: streamerInfo }),
+                    "Сведения сохранены.",
+                    () => undefined,
+                  );
+                }}
+              >
+                <Label htmlFor="streamer-info">Сведения о стримере</Label>
+                <Textarea
+                  id="streamer-info"
+                  value={streamerInfo}
+                  onChange={(event) => setStreamerInfo(event.target.value)}
+                  placeholder={STREAMER_INFO_EXAMPLE}
+                  rows={4}
+                />
+                <div className="flex items-center justify-between gap-4">
+                  {/* Без этой строки владелец ждёт, что уже разобранные
+                      документы изменятся сами, и не находит этого. */}
+                  <p className="text-sm text-muted-foreground">
+                    Действует на следующие разборы. Уже разобранное обновится после «Разобрать заново».
+                  </p>
+                  <Button
+                    type="submit"
+                    disabled={busy === "streamer" || streamerInfo === savedStreamerInfo}
+                  >
+                    {busy === "streamer" ? "Сохраняю…" : "Сохранить"}
+                  </Button>
+                </div>
+              </form>
+              {outcome("streamer")}
+            </section>
+          )}
 
           <section className="space-y-3">
             <h2 className="text-lg font-semibold">Добавить запись вручную</h2>
@@ -162,6 +238,7 @@ export function ManagePage({
                 {busy === "stream" ? "Добавляю…" : "Добавить"}
               </Button>
             </form>
+            {outcome("stream")}
           </section>
 
           <p className="text-sm text-muted-foreground">

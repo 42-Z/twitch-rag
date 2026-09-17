@@ -19,12 +19,21 @@
  */
 
 import path from "node:path";
-import { DOCUMENT_SYSTEM_PROMPT, buildDocumentPrompt } from "../../../../src/shared/openrouter.ts";
+import { DOCUMENT_RESPONSE_FORMAT } from "../../../../src/shared/document-schema.ts";
+import { MAX_OUTPUT_TOKENS as CODE_MAX_OUTPUT_TOKENS, MODELS } from "../../../../src/shared/openrouter.ts";
+import {
+  buildDocumentSystemPrompt,
+  buildPartMessage,
+  buildTranscriptMessage,
+} from "../../../../src/shared/prompt.ts";
 
 const API = "https://openrouter.ai/api/v1/chat/completions";
-/** Модель и потолок выхода задаются аргументами: стенд мерит не одну модель. */
-const MODEL = arg("model", "inclusionai/ling-3.0-flash");
-const MAX_OUTPUT_TOKENS = Number(arg("max-tokens", "32768"));
+/**
+ * Умолчания повторяют боевой разбор: иначе стенд мерит не то, что работает.
+ * Оба значения остаются аргументами — стенд мерит не одну модель.
+ */
+const MODEL = arg("model", MODELS.document);
+const MAX_OUTPUT_TOKENS = Number(arg("max-tokens", String(CODE_MAX_OUTPUT_TOKENS)));
 const TEMPERATURE = 0.3;
 /** Цены Novita на 2026-09-17, доллары за токен. */
 const PRICE = { prompt: 0.000000021, completion: 0.000000063 };
@@ -126,26 +135,33 @@ ${categories === "" ? "- категории не указаны" : categories}
 ${transcript}`;
 }
 
+/**
+ * Вариант — набор сообщений. У боевого разбора их три: системная инструкция,
+ * неизменная расшифровка и меняющийся участок. Порядок здесь тот же: от него
+ * зависит кэш входа, и мерить другую раскладку значило бы мерить не то, что
+ * работает.
+ */
 interface Variant {
   name: string;
   system: string;
-  user: string;
+  users: string[];
 }
 
 const variants: Variant[] = [
   {
     name: "A-сегодня",
-    system: DOCUMENT_SYSTEM_PROMPT,
-    user: buildDocumentPrompt({
-      fullTranscript: transcript,
-      part: { startSeconds: report.section.from, endSeconds: partEnd },
-      streamTitle: report.title,
-      publishedAt: report.publishedAt,
-      categories: report.chapters,
-    }),
+    system: buildDocumentSystemPrompt(),
+    users: [
+      buildTranscriptMessage({
+        publishedAt: report.publishedAt,
+        categories: report.chapters,
+        fullTranscript: transcript,
+      }),
+      buildPartMessage({ startSeconds: report.section.from, endSeconds: partEnd }),
+    ],
   },
-  { name: "B-без-потерь", system: CANDIDATE_SYSTEM_PROMPT, user: candidateUserPrompt() },
-  { name: "C-с-объёмом", system: `${CANDIDATE_SYSTEM_PROMPT}\n${VOLUME_RULE}`, user: candidateUserPrompt() },
+  { name: "B-без-потерь", system: CANDIDATE_SYSTEM_PROMPT, users: [candidateUserPrompt()] },
+  { name: "C-с-объёмом", system: `${CANDIDATE_SYSTEM_PROMPT}\n${VOLUME_RULE}`, users: [candidateUserPrompt()] },
 ];
 
 /**
@@ -156,12 +172,18 @@ const variants: Variant[] = [
 const reasoning = arg("reasoning", "");
 
 /**
- * Строгая схема ответа. Передаётся JSON-схемой, как её понимает провайдер:
- * `response_format` с типом `json_schema`, именем, флагом `strict` и самой схемой.
+ * Строгая схема ответа. По умолчанию берётся схема боевого разбора — так
+ * стенд мерит то, что действительно уходит в запрос. Аргументом можно задать
+ * другую: `response_format` с типом `json_schema`, именем, флагом `strict` и
+ * самой схемой.
  */
 const schema = arg("schema", "");
+const responseFormat =
+  schema === ""
+    ? DOCUMENT_RESPONSE_FORMAT
+    : { type: "json_schema", json_schema: { name: "document", strict: true, schema: JSON.parse(schema) } };
 
-async function chat(system: string, user: string, maxTokens: number, json = true): Promise<any> {
+async function chat(system: string, users: string[], maxTokens: number, json = true): Promise<any> {
   const response = await fetch(API, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
@@ -170,14 +192,10 @@ async function chat(system: string, user: string, maxTokens: number, json = true
       max_tokens: maxTokens,
       temperature: TEMPERATURE,
       ...(reasoning === "" ? {} : { reasoning: JSON.parse(reasoning) }),
-      ...(schema !== ""
-        ? { response_format: { type: "json_schema", json_schema: { name: "document", strict: true, schema: JSON.parse(schema) } } }
-        : json
-          ? { response_format: { type: "json_object" } }
-          : {}),
+      ...(json ? { response_format: responseFormat } : {}),
       messages: [
         { role: "system", content: system },
-        { role: "user", content: user },
+        ...users.map((user) => ({ role: "user", content: user })),
       ],
     }),
   });
@@ -188,7 +206,7 @@ async function chat(system: string, user: string, maxTokens: number, json = true
 // Сколько токенов занимает сама расшифровка: от этого зависит, поместится ли
 // эфир целиком в контекст модели.
 // Шестнадцать, а не один: часть провайдеров отвергает потолок меньше шестнадцати.
-const probe = await chat("Отвечай одним словом.", transcript, 16, false);
+const probe = await chat("Отвечай одним словом.", [transcript], 16, false);
 const transcriptTokens: number = probe.usage?.prompt_tokens ?? 0;
 console.log(`расшифровка участка: ${transcriptTokens} токенов (${(transcript.length / transcriptTokens).toFixed(2)} знака на токен)`);
 
@@ -204,7 +222,7 @@ for (const variant of chosen) {
   const roundLabel = repeat === 1 ? "" : `-r${round}`;
   console.log(`\n${variant.name}${roundLabel}: запрос…`);
   const started = Date.now();
-  const response = await chat(variant.system, variant.user, MAX_OUTPUT_TOKENS);
+  const response = await chat(variant.system, variant.users, MAX_OUTPUT_TOKENS);
   const elapsed = Date.now() - started;
 
   const choice = response.choices?.[0] ?? {};

@@ -14,7 +14,11 @@
  */
 
 import path from "node:path";
-import { DOCUMENT_SYSTEM_PROMPT, buildDocumentPrompt } from "../../../../src/shared/openrouter.ts";
+import {
+  buildDocumentSystemPrompt,
+  buildPartMessage,
+  buildTranscriptMessage,
+} from "../../../../src/shared/prompt.ts";
 
 const API = "https://openrouter.ai/api/v1/chat/completions";
 const MODEL = "inclusionai/ling-3.0-flash";
@@ -45,13 +49,16 @@ const transcript = (await Bun.file(path.join(dataDir, `transcript-${label}.txt`)
   .slice(0, 300)
   .join("\n");
 
-const user = buildDocumentPrompt({
-  fullTranscript: transcript,
-  part: { startSeconds: report.section.from, endSeconds: report.section.from + 900 },
-  streamTitle: report.title,
-  publishedAt: report.publishedAt,
-  categories: report.chapters,
-});
+/** Те же три сообщения, что уходят в разборе, и в том же порядке. */
+const system = buildDocumentSystemPrompt();
+const users = [
+  buildTranscriptMessage({
+    publishedAt: report.publishedAt,
+    categories: report.chapters,
+    fullTranscript: transcript,
+  }),
+  buildPartMessage({ startSeconds: report.section.from, endSeconds: report.section.from + 900 }),
+];
 
 const limits = arg("max-tokens", "300,1500,4000").split(",").map(Number);
 
@@ -65,8 +72,8 @@ for (const maxTokens of limits) {
       temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: DOCUMENT_SYSTEM_PROMPT },
-        { role: "user", content: user },
+        { role: "system", content: system },
+        ...users.map((user) => ({ role: "user", content: user })),
       ],
     }),
   });

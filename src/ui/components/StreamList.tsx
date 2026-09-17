@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { formatDuration } from "@/shared/time.ts";
+import { documentName } from "@/shared/document-name.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
@@ -23,14 +24,16 @@ function formatDate(iso: string): string {
 interface StreamListProps {
   onOpen: (vodId: string) => void;
   onDelete?: (vodId: string) => Promise<void>;
+  onReparse?: (vodId: string) => Promise<void>;
   /** Растёт при внешнем изменении реестра (после добавления/удаления) — заставляет перечитать список. */
   refreshToken?: number;
 }
 
-export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps): React.JSX.Element {
+export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: StreamListProps): React.JSX.Element {
   const [streams, setStreams] = useState<StreamSummary[] | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [deletingId, setDeletingId] = useState<string | undefined>(undefined);
+  const [reparsingId, setReparsingId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,11 +86,15 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
           Разобрано ({ready.length})
         </h3>
         <ul className="divide-y">
+          {/* Заголовок с площадки в показе не участвует: документ
+              представляется именем, выработанным по содержанию эфира
+              (FR-025, FR-027). Прежний заголовок остаётся только у записей,
+              разобранных до появления имён, — до повторного разбора. */}
           {ready.map((stream) => (
             <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <p className="font-medium">{stream.title || "Без названия"}</p>
+                  <p className="font-medium">{documentName(stream) || "Без названия"}</p>
                   <p className="text-sm text-muted-foreground">
                     {formatDate(stream.publishedAt)} · {formatDuration(stream.durationSeconds)} · разделов:{" "}
                     {stream.sectionCount}
@@ -97,13 +104,42 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
                   <Button size="sm" variant="secondary" onClick={() => onOpen(stream.vodId)}>
                     Открыть документ
                   </Button>
+                  {onReparse !== undefined && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={reparsingId === stream.vodId}
+                      onClick={() => {
+                        // Предупреждение обязательно: повтор стоит столько же,
+                        // сколько первый разбор, и владелец должен знать это до
+                        // нажатия, а не после (FR-035).
+                        const confirmed = window.confirm(
+                          `Разобрать «${documentName(stream)}» заново?\n\n` +
+                            "Запись будет скачана и распознана повторно — это стоит столько же, " +
+                            "сколько первый разбор. Прежний документ и знания заменятся новыми.",
+                        );
+                        if (!confirmed) return;
+                        setReparsingId(stream.vodId);
+                        onReparse(stream.vodId)
+                          .then(() => setStreams((current) => current?.map((item) =>
+                            item.vodId === stream.vodId ? { ...item, status: "processing" as const } : item,
+                          )))
+                          .catch((reparseError: unknown) =>
+                            setError(reparseError instanceof Error ? reparseError.message : String(reparseError)),
+                          )
+                          .finally(() => setReparsingId(undefined));
+                      }}
+                    >
+                      {reparsingId === stream.vodId ? "Запускаю…" : "Разобрать заново"}
+                    </Button>
+                  )}
                   {onDelete !== undefined && (
                     <Button
                       size="sm"
                       variant="ghost"
                       disabled={deletingId === stream.vodId}
                       onClick={() => {
-                        if (!window.confirm(`Удалить «${stream.title}» из базы знаний?`)) return;
+                        if (!window.confirm(`Удалить «${documentName(stream)}» из базы знаний?`)) return;
                         setDeletingId(stream.vodId);
                         onDelete(stream.vodId)
                           .then(() => setStreams((current) => current?.filter((item) => item.vodId !== stream.vodId)))
@@ -142,7 +178,9 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
           <ul className="divide-y">
             {inProgress.map((stream) => (
               <li key={stream.vodId} className="space-y-0.5 py-4 first:pt-0">
-                <p className="font-medium">{stream.title || stream.vodId}</p>
+                {/* Имя документа у перебираемой записи уже есть с прошлого
+                    разбора — показывается оно, а не заголовок с площадки. */}
+                <p className="font-medium">{documentName(stream) || stream.vodId}</p>
                 <p className="text-sm text-muted-foreground">
                   {stream.status === "processing" ? "разбирается…" : `не удалось разобрать: ${stream.reason ?? ""}`}
                 </p>
@@ -160,7 +198,7 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
           <ul className="divide-y">
             {skipped.map((stream) => (
               <li key={stream.vodId} className="space-y-0.5 py-4 first:pt-0">
-                <p className="font-medium text-muted-foreground">{stream.title || stream.vodId}</p>
+                <p className="font-medium text-muted-foreground">{documentName(stream) || stream.vodId}</p>
                 <p className="text-sm text-muted-foreground">{stream.reason ?? "причина не указана"}</p>
               </li>
             ))}

@@ -94,9 +94,14 @@ export class Documents {
   }
 }
 
-/** Шапка документа: то, что человек видит до первого раздела. */
+/**
+ * Шапка документа: то, что человек видит до первого раздела.
+ *
+ * Заголовок здесь — имя документа, выработанное по содержанию эфира, а не
+ * заголовок трансляции с площадки: тому в документе места нет (FR-027).
+ */
 export function renderDocumentHeader(input: {
-  title: string;
+  name: string;
   publishedAt: string;
   durationSeconds: number;
   categories: readonly string[];
@@ -104,5 +109,5 @@ export function renderDocumentHeader(input: {
   const date = input.publishedAt.slice(0, 10);
   const duration = formatDuration(input.durationSeconds);
   const categories = input.categories.length > 0 ? `\n\n**Категории**: ${input.categories.join(", ")}` : "";
-  return `# ${input.title}\n\n**Эфир**: ${date} · **Длительность**: ${duration}${categories}`;
+  return `# ${input.name}\n\n**Эфир**: ${date} · **Длительность**: ${duration}${categories}`;
 }
