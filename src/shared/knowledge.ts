@@ -210,7 +210,7 @@ export class Knowledge {
  * превращался бы в синтаксическую ошибку на стороне сервиса вместо понятного
  * отказа, а при неудачном стечении — в подстановку чужого условия.
  */
-const UNSAFE_IN_FILTER = /['"\\ -]/;
+const UNSAFE_IN_FILTER = /['"\\\u0000-\u001f]/;
 
 export function buildFilter(options: SearchOptions): string {
   const parts: string[] = [];
