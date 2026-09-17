@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "sections": {
+      "type": "array",
+      "description": "Разделы документа по порядку хода эфира",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "Название темы в несколько слов" },
+          "text": { "type": "string", "description": "Связный текст раздела" }
+        },
+        "required": ["title", "text"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["sections"],
+  "additionalProperties": false
+}

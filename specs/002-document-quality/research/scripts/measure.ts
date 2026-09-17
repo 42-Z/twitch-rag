@@ -155,6 +155,12 @@ const variants: Variant[] = [
  */
 const reasoning = arg("reasoning", "");
 
+/**
+ * Строгая схема ответа. Передаётся JSON-схемой, как её понимает провайдер:
+ * `response_format` с типом `json_schema`, именем, флагом `strict` и самой схемой.
+ */
+const schema = arg("schema", "");
+
 async function chat(system: string, user: string, maxTokens: number, json = true): Promise<any> {
   const response = await fetch(API, {
     method: "POST",
@@ -164,7 +170,11 @@ async function chat(system: string, user: string, maxTokens: number, json = true
       max_tokens: maxTokens,
       temperature: TEMPERATURE,
       ...(reasoning === "" ? {} : { reasoning: JSON.parse(reasoning) }),
-      ...(json ? { response_format: { type: "json_object" } } : {}),
+      ...(schema !== ""
+        ? { response_format: { type: "json_schema", json_schema: { name: "document", strict: true, schema: JSON.parse(schema) } } }
+        : json
+          ? { response_format: { type: "json_object" } }
+          : {}),
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
