@@ -22,8 +22,9 @@ import path from "node:path";
 import { DOCUMENT_SYSTEM_PROMPT, buildDocumentPrompt } from "../../../../src/shared/openrouter.ts";
 
 const API = "https://openrouter.ai/api/v1/chat/completions";
-const MODEL = "inclusionai/ling-3.0-flash";
-const MAX_OUTPUT_TOKENS = 32768;
+/** Модель и потолок выхода задаются аргументами: стенд мерит не одну модель. */
+const MODEL = arg("model", "inclusionai/ling-3.0-flash");
+const MAX_OUTPUT_TOKENS = Number(arg("max-tokens", "32768"));
 const TEMPERATURE = 0.3;
 /** Цены Novita на 2026-09-17, доллары за токен. */
 const PRICE = { prompt: 0.000000021, completion: 0.000000063 };
@@ -176,7 +177,8 @@ async function chat(system: string, user: string, maxTokens: number, json = true
 
 // Сколько токенов занимает сама расшифровка: от этого зависит, поместится ли
 // эфир целиком в контекст модели.
-const probe = await chat("Отвечай одним словом.", transcript, 1, false);
+// Шестнадцать, а не один: часть провайдеров отвергает потолок меньше шестнадцати.
+const probe = await chat("Отвечай одним словом.", transcript, 16, false);
 const transcriptTokens: number = probe.usage?.prompt_tokens ?? 0;
 console.log(`расшифровка участка: ${transcriptTokens} токенов (${(transcript.length / transcriptTokens).toFixed(2)} знака на токен)`);
 
