@@ -47,7 +47,9 @@ const label: string = arg("transcript");
 const limit = Number(arg("chars", "60000"));
 /** Длина участка прохода в минутах; ноль — весь замеряемый отрезок. */
 const partMinutes = Number(arg("part-minutes", "0"));
-const runLabel = partMinutes === 0 ? label : `${label}-part${partMinutes}`;
+/** Метка прогона: по ней файлы разных настроек не затирают друг друга. */
+const tag = arg("tag", "");
+const runLabel = (partMinutes === 0 ? label : `${label}-part${partMinutes}`) + (tag === "" ? "" : `-${tag}`);
 
 interface TranscriptReport {
   vod: string;
@@ -209,6 +211,7 @@ for (const variant of chosen) {
     round,
     partMinutes,
     partChars,
+    reasoning: reasoning === "" ? null : reasoning,
     model: response.model ?? MODEL,
     provider: response.provider ?? null,
     promptTokens: usage.prompt_tokens ?? null,
@@ -235,9 +238,9 @@ for (const variant of chosen) {
   // Сырой ответ — на случай, если понадобится разобрать его иначе, чем здесь.
   await Bun.write(path.join(dataDir, `raw-${runLabel}-${variant.name}${roundLabel}.json`), `${JSON.stringify(response, null, 2)}\n`);
 
-  const reasoning = usage.completion_tokens_details?.reasoning_tokens ?? 0;
+  const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens ?? 0;
   console.log(
-    `  ${variant.name}${roundLabel}: выход ${record.completionTokens} токенов (из них рассуждений ${reasoning}), ` +
+    `  ${variant.name}${roundLabel}: выход ${record.completionTokens} токенов (из них рассуждений ${reasoningTokens}), ` +
       `${record.sectionChars} знаков в ${record.sections} разделах, ${Math.round(record.partCompression * 100)}% ` +
       `от участка прохода, остановка ${record.finishReason}, провайдер ${record.provider}, ${(elapsed / 1000).toFixed(0)} с`,
   );
