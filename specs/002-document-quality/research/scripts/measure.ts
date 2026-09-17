@@ -170,9 +170,17 @@ const probe = await chat("Отвечай одним словом.", transcript, 
 const transcriptTokens: number = probe.usage?.prompt_tokens ?? 0;
 console.log(`расшифровка участка: ${transcriptTokens} токенов (${(transcript.length / transcriptTokens).toFixed(2)} знака на токен)`);
 
+/** Отбор инструкций и повторов: одна длина участка меряется несколько раз. */
+const wanted = arg("variants", "").split(",").filter((value) => value !== "");
+const chosen = wanted.length === 0 ? variants : variants.filter((variant) => wanted.some((prefix) => variant.name.startsWith(prefix)));
+if (chosen.length === 0) throw new Error(`ни одна инструкция не подходит под «${wanted.join(",")}»`);
+const repeat = Number(arg("repeat", "1"));
+
 const results: unknown[] = [];
-for (const variant of variants) {
-  console.log(`\n${variant.name}: запрос…`);
+for (let round = 1; round <= repeat; round++) {
+for (const variant of chosen) {
+  const roundLabel = repeat === 1 ? "" : `-r${round}`;
+  console.log(`\n${variant.name}${roundLabel}: запрос…`);
   const started = Date.now();
   const response = await chat(variant.system, variant.user, MAX_OUTPUT_TOKENS);
   const elapsed = Date.now() - started;
@@ -190,6 +198,9 @@ for (const variant of variants) {
 
   const record = {
     variant: variant.name,
+    round,
+    partMinutes,
+    partChars,
     model: response.model ?? MODEL,
     provider: response.provider ?? null,
     promptTokens: usage.prompt_tokens ?? null,
@@ -212,21 +223,24 @@ for (const variant of variants) {
     parsed: sections.length > 0,
   };
   results.push(record);
-  await Bun.write(path.join(dataDir, `document-${runLabel}-${variant.name}.json`), `${JSON.stringify({ record, sections }, null, 2)}\n`);
+  await Bun.write(path.join(dataDir, `document-${runLabel}-${variant.name}${roundLabel}.json`), `${JSON.stringify({ record, sections }, null, 2)}\n`);
   // Сырой ответ — на случай, если понадобится разобрать его иначе, чем здесь.
-  await Bun.write(path.join(dataDir, `raw-${runLabel}-${variant.name}.json`), `${JSON.stringify(response, null, 2)}\n`);
+  await Bun.write(path.join(dataDir, `raw-${runLabel}-${variant.name}${roundLabel}.json`), `${JSON.stringify(response, null, 2)}\n`);
 
   const reasoning = usage.completion_tokens_details?.reasoning_tokens ?? 0;
   console.log(
-    `  выход ${record.completionTokens} токенов (из них рассуждений ${reasoning}), ${record.sectionChars} знаков ` +
-      `в ${record.sections} разделах, ${Math.round(record.partCompression * 100)}% от участка прохода, ` +
-      `остановка ${record.finishReason}, провайдер ${record.provider}, ${(elapsed / 1000).toFixed(0)} с`,
+    `  ${variant.name}${roundLabel}: выход ${record.completionTokens} токенов (из них рассуждений ${reasoning}), ` +
+      `${record.sectionChars} знаков в ${record.sections} разделах, ${Math.round(record.partCompression * 100)}% ` +
+      `от участка прохода, остановка ${record.finishReason}, провайдер ${record.provider}, ${(elapsed / 1000).toFixed(0)} с`,
   );
+}
 }
 
 const summary = {
   label,
   model: MODEL,
+  partMinutes,
+  partChars,
   measuredAt: new Date().toISOString(),
   transcript: {
     vod: report.vod,
