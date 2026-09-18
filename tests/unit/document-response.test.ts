@@ -75,6 +75,14 @@ describe("исходы ответа модели", () => {
     expect(codeOf(() => readDocumentChoice(choice({ content: "{}" })))).toBe("upstream_unavailable");
   });
 
+  test("пустой список разделов — законный ответ для участка без речи", () => {
+    // Инструкция разрешает ответить так, когда на участке звучала только
+    // музыка или тишина. Отличить это от отказа можно по признаку остановки:
+    // обрыв по потолку и отказ модели приходят другими исходами, а пропуск
+    // речи виден по разрыву во времени, который попадает в реестр.
+    expect(readDocumentChoice(choice({ content: '{"sections": []}' }))).toEqual([]);
+  });
+
   test("не JSON отвергается", () => {
     expect(codeOf(() => readDocumentChoice(choice({ content: "текст вместо JSON" })))).toBe("upstream_unavailable");
   });

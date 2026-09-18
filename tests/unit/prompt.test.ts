@@ -1,6 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import {
   PROMPT_EXAMPLES,
+  PROMPT_LANGUAGE,
   PROMPT_RESPONSE_FORMAT,
   PROMPT_ROLE,
   PROMPT_RULES,
@@ -24,6 +25,16 @@ describe("порядок частей инструкции", () => {
     expect(prompt.indexOf(PROMPT_RULES)).toBeGreaterThan(prompt.indexOf(PROMPT_ROLE));
     expect(prompt.indexOf(PROMPT_RESPONSE_FORMAT)).toBeGreaterThan(prompt.indexOf(PROMPT_RULES));
     expect(prompt.indexOf(PROMPT_EXAMPLES)).toBeGreaterThan(prompt.indexOf(PROMPT_RESPONSE_FORMAT));
+    // Требование языка стоит последним: оно — то, что модель читает перед
+    // ответом, и ошибка языка объявлена в нём грубым провалом.
+    expect(prompt.indexOf(PROMPT_LANGUAGE)).toBeGreaterThan(prompt.indexOf(PROMPT_EXAMPLES));
+  });
+
+  test("инструкция велит не выносить в ответ ход работы", () => {
+    // Иначе модель отвечает рассуждением вместо документа: расшифровка
+    // читается как продолжение задания, и без явного запрета шаги работы
+    // утекают в ответ.
+    expect(buildDocumentSystemPrompt()).toContain("В ОТВЕТ НЕ ВЫНОСИТСЯ");
   });
 
   test("без сведений о стримере в инструкции нет ни заголовка, ни следа", () => {
@@ -68,7 +79,7 @@ describe("запрос прохода", () => {
     expect(transcript).toContain("2026-09-16");
     expect(transcript).toContain("[0] привет");
     expect(transcript).not.toContain("Твой участок");
-    expect(part).toContain("с 0 по 600 секунду");
+    expect(part).toContain("С 0 по 600 секунду");
     expect(part).not.toContain("[0] привет");
   });
 

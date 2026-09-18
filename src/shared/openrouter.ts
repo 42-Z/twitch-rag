@@ -338,6 +338,11 @@ export function parseComposedSections(raw: string): ComposedSection[] {
     throw new AppError("upstream_unavailable", "Ответ модели не соответствует схеме документа.");
   }
 
+  // Пустой список — законный ответ для участка, где не звучало речи: там
+  // документировать нечего, и инструкция разрешает ответить именно так.
+  // Пропуск при этом не остаётся незамеченным: разрыв по времени попадает в
+  // реестр причиной (`findCoverageGaps`), а участок без единого раздела при
+  // непустой расшифровке виден по нему же.
   const sections: ComposedSection[] = [];
   for (const section of parsed.data.sections) {
     const title = section.title.trim();
@@ -351,9 +356,6 @@ export function parseComposedSections(raw: string): ComposedSection[] {
     });
   }
 
-  if (sections.length === 0) {
-    throw new AppError("upstream_unavailable", "Модель не дала ни одного пригодного раздела.");
-  }
   return sections;
 }
 
