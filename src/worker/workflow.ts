@@ -11,13 +11,13 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import type { Env, IngestParams, Services } from "./env.ts";
 import { createServices } from "./env.ts";
 import { shiftSegments, prevailingLanguage, formatDuration } from "../shared/time.ts";
-import { renderTranscript, type ComposedSection } from "../shared/openrouter.ts";
+import { renderTranscript } from "../shared/openrouter.ts";
 import { planDocumentParts, assignCategories, uniqueCategories } from "../shared/categories.ts";
 import { normalizeSections, type ParsedSection } from "../shared/sections.ts";
 import { buildChunks } from "../shared/chunks.ts";
 import { renderDocumentHeader, Documents } from "../shared/documents.ts";
 import { chunkId } from "../shared/knowledge.ts";
-import { AppError } from "../shared/errors.ts";
+import { composePart } from "../shared/document-parts.ts";
 
 /**
  * Сколько знаков расшифровки приходится на один проход.
@@ -37,15 +37,6 @@ const CHARS_PER_PART = 30000;
 const EMBED_BATCH = 32;
 /** Разрыв больше этого означает пропущенный участок эфира, а не паузу в речи. */
 const MAX_COVERAGE_GAP_SECONDS = 300;
-/**
- * Короче этого участок не дробится при обрыве по потолку: дробить дальше
- * нечего, а вызовы модели множатся. Ниже длины прохода с запасом вчетверо.
- */
-const MIN_SPLIT_SECONDS = 300;
-/** Сколько раз допускается разделить участок, прежде чем признать обрыв отказом. */
-const MAX_SPLIT_DEPTH = 3;
-
-type Part = { startSeconds: number; endSeconds: number };
 
 /** Текст распознанного куска: живёт от распознавания до конца разбора. */
 const transcriptKey = (vodId: string, index: number): string =>
@@ -192,10 +183,11 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       const composed = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () => {
         const object = await this.env.AUDIO.get(transcriptFullKey(params.vodId));
         if (object === null) throw new Error("склеенная расшифровка исчезла из хранилища");
-        return await composePart(services, {
+        return await composePart(services.models, {
           transcript: await object.text(),
           part,
-          params,
+          publishedAt: params.publishedAt,
+          categories: params.categories,
           streamerInfo,
           // Ключ закрепления за провайдером на всю запись: проходы одной
           // записи должны попадать на тот же узел, иначе кэш входа не сработает.
@@ -323,58 +315,6 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
         cursor = listed.truncated ? listed.cursor : undefined;
       } while (cursor !== undefined);
     }
-  }
-}
-
-/**
- * Проход составления с переигровкой на меньшем участке.
- *
- * Остановка по потолку означает неполный ответ, и повторять тот же запрос
- * бессмысленно: причиной был размер ответа, а не случайность. Участок поэтому
- * делится пополам, и каждая половина пишется отдельно. Отказ модели и
- * недоступность сервиса так не лечатся — они уходят наверх как есть.
- */
-async function composePart(
-  services: Services,
-  input: {
-    transcript: string;
-    part: Part;
-    params: IngestParams;
-    streamerInfo: string;
-    sessionId: string;
-  },
-  depth = 0,
-): Promise<ComposedSection[]> {
-  try {
-    return await services.models.composeDocumentPart({
-      fullTranscript: input.transcript,
-      part: input.part,
-      publishedAt: input.params.publishedAt,
-      categories: input.params.categories,
-      streamerInfo: input.streamerInfo,
-      sessionId: input.sessionId,
-    });
-  } catch (error) {
-    const span = input.part.endSeconds - input.part.startSeconds;
-    const splittable =
-      error instanceof AppError &&
-      error.code === "output_truncated" &&
-      depth < MAX_SPLIT_DEPTH &&
-      span >= MIN_SPLIT_SECONDS * 2;
-    if (!splittable) throw error;
-
-    const middle = Math.round(input.part.startSeconds + span / 2);
-    const first = await composePart(
-      services,
-      { ...input, part: { startSeconds: input.part.startSeconds, endSeconds: middle } },
-      depth + 1,
-    );
-    const second = await composePart(
-      services,
-      { ...input, part: { startSeconds: middle, endSeconds: input.part.endSeconds } },
-      depth + 1,
-    );
-    return [...first, ...second];
   }
 }
 
