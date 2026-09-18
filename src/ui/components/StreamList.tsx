@@ -9,49 +9,54 @@
 
 import { useEffect, useState } from "react";
 import { formatDuration } from "@/shared/time.ts";
+import { documentName } from "@/shared/document-name.ts";
 import { Badge } from "@/components/ui/badge.tsx";
-import { Button } from "@/components/ui/button.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
+import { StreamActions } from "./StreamActions.tsx";
+import { formatDate, recordLabel } from "../lib/format.ts";
 import { listStreams, type StreamSummary } from "../lib/registry.ts";
-
-function formatDate(iso: string): string {
-  if (iso === "") return "дата неизвестна";
-  return new Date(iso).toLocaleDateString("ru-RU", { year: "numeric", month: "long", day: "numeric" });
-}
 
 interface StreamListProps {
   onOpen: (vodId: string) => void;
   onDelete?: (vodId: string) => Promise<void>;
+  onReparse?: (vodId: string) => Promise<void>;
   /** Растёт при внешнем изменении реестра (после добавления/удаления) — заставляет перечитать список. */
   refreshToken?: number;
 }
 
-export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps): React.JSX.Element {
+export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: StreamListProps): React.JSX.Element {
   const [streams, setStreams] = useState<StreamSummary[] | undefined>(undefined);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const [deletingId, setDeletingId] = useState<string | undefined>(undefined);
+  /** Сбой загрузки списка: показывать нечего, поэтому им и ограничивается весь экран. */
+  const [loadError, setLoadError] = useState<string | undefined>(undefined);
+  /**
+   * Сбой действия. Держится отдельно от сбоя загрузки: действие относится к
+   * одной записи, и убирать из-за него весь список нельзя — владелец терял бы
+   * его целиком из-за отказа, скажем, повторного разбора, который идёт прямо
+   * сейчас и отвергнут по правилу FR-030.
+   */
+  const [rowError, setRowError] = useState<{ vodId: string; text: string } | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
-    setError(undefined);
+    setLoadError(undefined);
     listStreams()
       .then((result) => {
         if (!cancelled) setStreams(result);
       })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : String(loadError));
+      .catch((error: unknown) => {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error));
       });
     return () => {
       cancelled = true;
     };
   }, [refreshToken]);
 
-  if (error !== undefined) {
+  if (loadError !== undefined) {
     return (
       <Alert variant="destructive">
         <AlertTitle>Реестр недоступен</AlertTitle>
-        <AlertDescription>{error}</AlertDescription>
+        <AlertDescription>{loadError}</AlertDescription>
       </Alert>
     );
   }
@@ -76,6 +81,37 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
     );
   }
 
+  function failed(vodId: string): React.JSX.Element | null {
+    if (rowError === undefined || rowError.vodId !== vodId) return null;
+    return <p className="text-sm text-destructive">{rowError.text}</p>;
+  }
+
+  function actions(stream: StreamSummary): React.JSX.Element {
+    return (
+      <StreamActions
+        stream={stream}
+        onOpen={onOpen}
+        {...(onReparse === undefined ? {} : { onReparse })}
+        {...(onDelete === undefined ? {} : { onDelete })}
+        onFailed={(vodId, text) => setRowError({ vodId, text })}
+        onDone={(vodId, outcome) => {
+          setRowError(undefined);
+          setStreams((current) =>
+            current === undefined
+              ? current
+              : outcome === "deleted"
+                ? current.filter((item) => item.vodId !== vodId)
+                : // Разбор принят: запись уходит в «В обработке» до следующего
+                  // перечитывания списка.
+                  current.map((item) =>
+                    item.vodId === vodId ? { ...item, status: "processing" as const } : item,
+                  ),
+          );
+        }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <section>
@@ -83,41 +119,30 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
           Разобрано ({ready.length})
         </h3>
         <ul className="divide-y">
+          {/* Заголовок с площадки в показе не участвует: документ
+              представляется именем, выработанным по содержанию эфира
+              (FR-025, FR-027). У записи, разобранной до появления имён, имени
+              ещё нет — она и подписана «без названия» до тех пор, пока имя не
+              выработается; рядом стоит дата, и запись остаётся различимой. */}
           {ready.map((stream) => (
             <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <p className="font-medium">{stream.title || "Без названия"}</p>
+                  <p className="font-medium">{documentName(stream) || "Без названия"}</p>
                   <p className="text-sm text-muted-foreground">
                     {formatDate(stream.publishedAt)} · {formatDuration(stream.durationSeconds)} · разделов:{" "}
                     {stream.sectionCount}
                   </p>
                 </div>
-                <div className="flex shrink-0 gap-2">
-                  <Button size="sm" variant="secondary" onClick={() => onOpen(stream.vodId)}>
-                    Открыть документ
-                  </Button>
-                  {onDelete !== undefined && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={deletingId === stream.vodId}
-                      onClick={() => {
-                        if (!window.confirm(`Удалить «${stream.title}» из базы знаний?`)) return;
-                        setDeletingId(stream.vodId);
-                        onDelete(stream.vodId)
-                          .then(() => setStreams((current) => current?.filter((item) => item.vodId !== stream.vodId)))
-                          .catch((deleteError: unknown) =>
-                            setError(deleteError instanceof Error ? deleteError.message : String(deleteError)),
-                          )
-                          .finally(() => setDeletingId(undefined));
-                      }}
-                    >
-                      {deletingId === stream.vodId ? "Удаление…" : "Удалить"}
-                    </Button>
-                  )}
-                </div>
+                {actions(stream)}
               </div>
+              {/* У разобранной записи причина — не отказ, а изъян разбора:
+                  столько-то эфира не попало ни в один раздел. Показать её
+                  больше негде, и без этой строки владелец читал бы документ
+                  как полный, не зная, что часть эфира в базе отсутствует. */}
+              {stream.reason !== undefined && stream.reason !== "" && (
+                <p className="text-sm text-amber-600">{stream.reason}</p>
+              )}
               {stream.categories.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {[...new Set(stream.categories.map((chapter) => chapter.title))]
@@ -129,6 +154,7 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
                     ))}
                 </div>
               )}
+              {failed(stream.vodId)}
             </li>
           ))}
         </ul>
@@ -141,11 +167,22 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
           </h3>
           <ul className="divide-y">
             {inProgress.map((stream) => (
-              <li key={stream.vodId} className="space-y-0.5 py-4 first:pt-0">
-                <p className="font-medium">{stream.title || stream.vodId}</p>
-                <p className="text-sm text-muted-foreground">
-                  {stream.status === "processing" ? "разбирается…" : `не удалось разобрать: ${stream.reason ?? ""}`}
-                </p>
+              <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    {/* Имени у такой записи может не быть вовсе: документ ещё
+                        не составлен. Тогда запись опознаётся по дате эфира —
+                        заголовок с площадки не показывается и здесь. */}
+                    <p className="font-medium">{recordLabel(stream)}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {stream.status === "processing"
+                        ? "разбирается…"
+                        : `не удалось разобрать: ${stream.reason ?? ""}`}
+                    </p>
+                  </div>
+                  {actions(stream)}
+                </div>
+                {failed(stream.vodId)}
               </li>
             ))}
           </ul>
@@ -159,9 +196,15 @@ export function StreamList({ onOpen, onDelete, refreshToken }: StreamListProps):
           </h3>
           <ul className="divide-y">
             {skipped.map((stream) => (
-              <li key={stream.vodId} className="space-y-0.5 py-4 first:pt-0">
-                <p className="font-medium text-muted-foreground">{stream.title || stream.vodId}</p>
-                <p className="text-sm text-muted-foreground">{stream.reason ?? "причина не указана"}</p>
+              <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="font-medium text-muted-foreground">{recordLabel(stream)}</p>
+                    <p className="text-sm text-muted-foreground">{stream.reason ?? "причина не указана"}</p>
+                  </div>
+                  {actions(stream)}
+                </div>
+                {failed(stream.vodId)}
               </li>
             ))}
           </ul>

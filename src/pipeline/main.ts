@@ -85,8 +85,10 @@ async function main(): Promise<void> {
         ? error.reason
         : classifyFailure(error instanceof Error ? error.message : String(error));
     console.error(`отказ по ${args.vodId}: ${reason.code} — ${reason.message}`);
+    // Номер прогона идёт и здесь: по нему Worker отличает отказ этого захода
+    // от запоздавшего отказа прошлого, когда разбор уже начался.
     await publisher
-      .notifyFailure(args.callbackUrl, secret, { vodId: args.vodId, ...reason })
+      .notifyFailure(args.callbackUrl, secret, { vodId: args.vodId, runId, ...reason })
       .catch((notifyError: unknown) => {
         console.error("не удалось сообщить Worker об отказе:", notifyError);
       });

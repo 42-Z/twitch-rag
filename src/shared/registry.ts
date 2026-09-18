@@ -6,7 +6,10 @@
  * что нельзя показать посетителю страницы.
  */
 
-import { Redis } from "@upstash/redis";
+// Вход, предназначенный для Workers: обычный берёт окружение и сеть так, как
+// это делается в Node, а площадка и то и другое подаёт иначе. Документация
+// прямо велит брать подходящий вход при развёртывании на особых площадках.
+import { Redis } from "@upstash/redis/cloudflare";
 import type { Chapter } from "./categories.ts";
 import { upstreamError } from "./errors.ts";
 
@@ -21,12 +24,28 @@ export interface ChannelRecord {
   addedAt: number;
   lastCheckedAt?: number;
   lastCheckError?: string;
+  /**
+   * Сведения о стримере: кто это, о чём канал, кто постоянные собеседники,
+   * свои словечки. Свободный текст от владельца, уходит в системную
+   * инструкцию. Пустая строка и отсутствие поля равнозначны «не заполнено».
+   */
+  streamerInfo?: string;
 }
 
 export interface StreamRecord {
   vodId: string;
   status: StreamStatus;
+  /**
+   * Заголовок с площадки. Служебное поле: в разборе не участвует и нигде не
+   * показывается (FR-027), остаётся только чтобы опознать запись, у которой
+   * документа ещё нет.
+   */
   title: string;
+  /**
+   * Имя документа, выработанное по содержанию эфира. Заполняется вместе с
+   * разбором; у разобранной записи оно есть всегда (FR-022).
+   */
+  docTitle?: string;
   url: string;
   publishedAt: string;
   publishedAtUnix: number;
@@ -72,6 +91,10 @@ export class Registry {
   async getChannel(): Promise<ChannelRecord | undefined> {
     const raw = await this.call(() => this.redis.hgetall<Record<string, unknown>>(CHANNEL_KEY));
     if (raw === null || Object.keys(raw).length === 0) return undefined;
+    // Сведения о стримере живут в том же хеше и могут появиться раньше самого
+    // канала. Хеш без логина — это не подключённый канал, и опрос по нему
+    // уходил бы в площадку с пустым идентификатором.
+    if (asString(raw["login"]) === "") return undefined;
     return {
       twitchUserId: asString(raw["twitchUserId"]),
       login: asString(raw["login"]),
@@ -80,11 +103,32 @@ export class Registry {
       addedAt: asNumber(raw["addedAt"]),
       ...(raw["lastCheckedAt"] === undefined ? {} : { lastCheckedAt: asNumber(raw["lastCheckedAt"]) }),
       ...(raw["lastCheckError"] === undefined ? {} : { lastCheckError: asString(raw["lastCheckError"]) }),
+      ...(raw["streamerInfo"] === undefined ? {} : { streamerInfo: asString(raw["streamerInfo"]) }),
     };
   }
 
+  /**
+   * Поля перечислены поимённо, а не разложены из записи: сведения о стримере
+   * правятся отдельным действием, и подключение канала не должно их затирать.
+   */
   async setChannel(channel: ChannelRecord): Promise<void> {
-    await this.call(() => this.redis.hset(CHANNEL_KEY, { ...channel }));
+    await this.call(() =>
+      this.redis.hset(CHANNEL_KEY, {
+        twitchUserId: channel.twitchUserId,
+        login: channel.login,
+        displayName: channel.displayName,
+        watchFrom: channel.watchFrom,
+        addedAt: channel.addedAt,
+      }),
+    );
+  }
+
+  /**
+   * Сведения о стримере (FR-014). Пустая строка сохраняется как есть: это
+   * осознанное «сведений нет», а не отсутствие записи (FR-016).
+   */
+  async setStreamerInfo(info: string): Promise<void> {
+    await this.call(() => this.redis.hset(CHANNEL_KEY, { streamerInfo: info }));
   }
 
   /** Итог очередного опроса канала: отсутствие новых записей — не ошибка. */
@@ -106,6 +150,30 @@ export class Registry {
   }
 
   /**
+   * Занять запись под разбор — одной неразрывной операцией.
+   *
+   * Проверка «эта запись уже разбирается» и запись `processing` — два разных
+   * обращения к хранилищу, и между ними есть окно: два запуска по одной
+   * записи успевают прочитать её до того, как любой из них её изменит, и оба
+   * проходят проверку. Дальше два конвейера качают эфир в одну папку и затирают
+   * друг другу куски — в проекте это уже случалось.
+   *
+   * Скрипт выполняется хранилищем целиком, поэтому проверка и запись в нём
+   * неразделимы: второй запуск увидит `processing`, поставленный первым.
+   * Возвращает `false`, если запись занята живым разбором.
+   *
+   * Записи, которой ещё нет, занятие не мешает: её создаст `putStream` следом.
+   * Гонка двух одновременных добавлений одной новой записи здесь не закрыта —
+   * ущерба от неё нет, оба запуска идут по пустому месту.
+   */
+  async claimForIngest(vodId: string, nowUnix: number): Promise<boolean> {
+    const claimed = await this.call(() =>
+      this.redis.eval(CLAIM_SCRIPT, [streamKey(vodId)], [nowUnix, STALE_PROCESSING_SECONDS]),
+    );
+    return Number(claimed) === 1;
+  }
+
+  /**
    * Запись реестра и её место в списке по дате меняются вместе: список,
    * разошедшийся с записями, ломает и страницу, и выбор «что разбирать».
    */
@@ -123,6 +191,7 @@ export class Registry {
       attempts: record.attempts,
     };
     for (const [key, value] of Object.entries({
+      docTitle: record.docTitle,
       language: record.language,
       sectionCount: record.sectionCount,
       chunkCount: record.chunkCount,
@@ -162,10 +231,19 @@ export class Registry {
     });
   }
 
-  /** Идентификаторы всех известных записей — основа проверки «эту уже брали». */
+  /**
+   * Идентификаторы всех известных записей — основа проверки «эту уже брали».
+   *
+   * Приведение к строке здесь не для красоты. Ответ разбирается как JSON, и
+   * участник множества, состоящий из цифр, возвращается числом — проверено на
+   * самом SDK с подменённой сетью: на запрос обхода вернулось `2345678901`
+   * числом. Идентификаторы площадки приходят строками, поэтому без приведения
+   * проверка «эту запись уже брали» не срабатывала бы никогда, и обход архива
+   * каждый раз шёл бы до конца вместо остановки на первой известной записи.
+   */
   async knownVodIds(): Promise<string[]> {
-    const ids = await this.call(() => this.redis.zrange<string[]>(INDEX_KEY, 0, -1));
-    return ids;
+    const ids = await this.call(() => this.redis.zrange<unknown[]>(INDEX_KEY, 0, -1));
+    return ids.map((id) => String(id));
   }
 
   async listStreams(options: { limit?: number; fromUnix?: number; toUnix?: number } = {}): Promise<StreamRecord[]> {
@@ -261,6 +339,12 @@ function asChapters(value: unknown): Chapter[] {
   }
 }
 
+/**
+ * Приведение к строке — не перестраховка. Клиент Upstash пробует каждое
+ * значение хеша разобрать как JSON и возвращает как есть, только если не
+ * разобралось: значит, записанное «42» вернётся числом, «null» — пустотой,
+ * `true` — булевым. Имя документа «42» без этого приведения пришло бы числом.
+ */
 function asString(value: unknown): string {
   return value === undefined || value === null ? "" : String(value);
 }
@@ -294,6 +378,7 @@ function toStreamRecord(raw: Record<string, unknown>): StreamRecord {
     categories: asChapters(raw["categories"]),
     source: asString(raw["source"]) === "manual" ? "manual" : "auto",
     attempts: asNumber(raw["attempts"]),
+    ...defined("docTitle", optionalString(raw["docTitle"])),
     ...defined("language", optionalString(raw["language"])),
     ...defined("sectionCount", optionalNumber(raw["sectionCount"])),
     ...defined("chunkCount", optionalNumber(raw["chunkCount"])),
@@ -312,6 +397,22 @@ function defined<K extends string, V>(key: K, value: V | undefined): Record<K, V
 function isStatus(value: string): value is StreamStatus {
   return value === "processing" || value === "ready" || value === "skipped" || value === "failed";
 }
+
+/**
+ * Занятие записи под разбор одним действием хранилища.
+ *
+ * Смысл здесь в том, чего в нём нет: между проверкой и записью нет ни одного
+ * обращения к сети, поэтому окна, в которое влез бы второй запуск, тоже нет.
+ */
+const CLAIM_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 1 end
+if redis.call('HGET', KEYS[1], 'status') == 'processing' then
+  local startedAt = tonumber(redis.call('HGET', KEYS[1], 'processedAt') or '0')
+  if tonumber(ARGV[1]) - startedAt <= tonumber(ARGV[2]) then return 0 end
+end
+redis.call('HSET', KEYS[1], 'status', 'processing', 'processedAt', ARGV[1])
+return 1
+`;
 
 /** Брошенный разбор: живёт в `processing` дольше суток и должен быть взят заново. */
 export function isStale(record: StreamRecord, nowUnix: number): boolean {

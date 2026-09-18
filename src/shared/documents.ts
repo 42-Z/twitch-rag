@@ -29,17 +29,26 @@ export class Documents {
    * Документ пишется один раз и целиком — после того, как составлены все его
    * части. Половины документа в хранилище не бывает.
    *
-   * `multipart` включён не ради размера: обычная запись подписывает заголовок
-   * `content-length`, но Workers при теле-потоке шлёт запрос chunked-кодировкой
-   * и этот заголовок до R2 не доносит — подпись не сходится, приходит 403
-   * `signature_mismatch`. Многочастный путь SDK отправляет часть готовым
-   * массивом байтов, и длина доходит неизменной. Проверено в workerd:
-   * обычная запись падает, многочастная проходит и читается обратно дословно.
+   * `multipart` включён не ради размера. Проверено в workerd: обычная запись
+   * падает с 403 `signature_mismatch`, многочастная проходит и читается
+   * обратно дословно. Почему падает — неизвестно: справочник называет причиной
+   * такого отказа расхождение подписанной длины или типа тела с отправленными,
+   * но про запись из Workers не говорит ничего, и их справочная служба ответа
+   * не даёт. Догадка про chunked-кодировку, которая съедает `content-length`,
+   * подтверждения не нашла.
+   *
+   * `cache` задан явно, хотя по умолчанию кэш и так недолгий. Адрес документа
+   * постоянный, а содержимое переписывается при повторном разборе, — это ровно
+   * тот случай, о котором документация предупреждает: «`url` не меняется, и
+   * кэши продолжают отдавать старые байты». По умолчанию объект ложится с
+   * `public, max-age=3600`, и повторный разбор до часа оставался бы невидимым.
+   * `no-store` документация называет выбором для приватного содержимого.
    */
   async save(vodId: string, markdown: string): Promise<void> {
     try {
       await this.bucket.put(Documents.path(vodId), markdown, {
         contentType: "text/markdown; charset=utf-8",
+        cache: "no-store",
         multipart: true,
       });
     } catch (error) {
@@ -94,9 +103,48 @@ export class Documents {
   }
 }
 
-/** Шапка документа: то, что человек видит до первого раздела. */
+/**
+ * Заголовки разделов из готового документа.
+ *
+ * Нужны, чтобы выработать имя документу, разобранному до появления имён, не
+ * перечитывая эфир: имя делается по оглавлению, а оглавление в документе уже
+ * есть. Заголовок раздела отделяется от времени, которое дописано в той же
+ * строке в квадратных скобках (`## Тема [0:12:34 — 0:25:01]`).
+ */
+export function documentSectionTitles(markdown: string): string[] {
+  const titles: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (!line.startsWith("## ")) continue;
+    const title = line.slice(3).replace(/\s*\[[^\]]*\]$/, "").trim();
+    if (title !== "") titles.push(title);
+  }
+  return titles;
+}
+
+/**
+ * Тот же документ с новым именем в шапке.
+ *
+ * Документ пишется нами и шапку имеет всегда; её отсутствие означает, что
+ * документ не наш, и молча оставить старое имя значило бы соврать о
+ * результате.
+ */
+export function renameDocumentHeader(markdown: string, name: string): string {
+  const lines = markdown.split("\n");
+  if (lines[0]?.startsWith("# ") !== true) {
+    throw new Error("В документе нет шапки — имя заменить негде.");
+  }
+  lines[0] = `# ${name}`;
+  return lines.join("\n");
+}
+
+/**
+ * Шапка документа: то, что человек видит до первого раздела.
+ *
+ * Заголовок здесь — имя документа, выработанное по содержанию эфира, а не
+ * заголовок трансляции с площадки: тому в документе места нет (FR-027).
+ */
 export function renderDocumentHeader(input: {
-  title: string;
+  name: string;
   publishedAt: string;
   durationSeconds: number;
   categories: readonly string[];
@@ -104,5 +152,5 @@ export function renderDocumentHeader(input: {
   const date = input.publishedAt.slice(0, 10);
   const duration = formatDuration(input.durationSeconds);
   const categories = input.categories.length > 0 ? `\n\n**Категории**: ${input.categories.join(", ")}` : "";
-  return `# ${input.title}\n\n**Эфир**: ${date} · **Длительность**: ${duration}${categories}`;
+  return `# ${input.name}\n\n**Эфир**: ${date} · **Длительность**: ${duration}${categories}`;
 }

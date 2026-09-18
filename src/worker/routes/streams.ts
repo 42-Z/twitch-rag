@@ -1,37 +1,26 @@
 /**
- * Операции владельца: ручное добавление, документ трансляции, удаление,
- * настройка канала. Разбор новых записей запускается отсюда же, что и из
- * расписания (`schedule.ts`) — общий код в `startStreamIngest`.
+ * Операции владельца над записями: ручное добавление, документ трансляции,
+ * удаление, повторный разбор. Разбор новых записей запускается отсюда же,
+ * что и из расписания (`schedule.ts`) — общий код в `startStreamIngest`.
  */
 
 import { z } from "zod";
 import { AppError } from "../../shared/errors.ts";
-import { isStale, type StreamRecord } from "../../shared/registry.ts";
+import { MAX_ATTEMPTS, isStale, type StreamRecord } from "../../shared/registry.ts";
 import { skipReason } from "../../shared/twitch.ts";
 import type { Env, Services } from "../env.ts";
+import { parseJson, requireAdminToken } from "./owner.ts";
 
 /**
  * Идёт ли по записи разбор прямо сейчас.
  *
- * Проверка нужна в двух местах и по одной причине: второй разбор той же
- * записи запускать нельзя — два конвейера пишут куски в одну папку бокса и
+ * Проверка нужна в нескольких местах и по одной причине: второй разбор той
+ * же записи запускать нельзя — два конвейера пишут куски в одну папку бокса и
  * портят друг другу работу. Брошенная запись (в `processing` дольше суток)
  * разбором не считается: её как раз и надо взять заново.
  */
 export function isBusy(record: StreamRecord | undefined, nowUnix: number): boolean {
   return record !== undefined && record.status === "processing" && !isStale(record, nowUnix);
-}
-
-export function requireAdminToken(request: Request, env: Env): void {
-  const header = request.headers.get("authorization") ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-  if (token === "" || token !== env.APP_ADMIN_TOKEN) {
-    // Неверный токен — отказ в доступе, а не ошибка в запросе: страница
-    // владельца различает эти случаи и говорит человеку, что токен не подошёл.
-    throw new AppError("unauthorized", "Нужен токен владельца в заголовке Authorization.", {
-      hint: "Authorization: Bearer <APP_ADMIN_TOKEN>",
-    });
-  }
 }
 
 // --- POST /api/streams: ручное добавление записи (FR-004) ---
@@ -119,6 +108,18 @@ export async function startStreamIngest(
     return;
   }
 
+  // Занятие записи — вплотную к запуску и одним действием хранилища:
+  // проверка выше читает запись отдельно от записи, и в это окно второй запуск
+  // успевает проскочить. Здесь проскочить некуда. Стоит оно после опроса
+  // площадки нарочно: откажись площадка отвечать, запись осталась бы занятой
+  // до истечения суток, а разбора бы не было.
+  const claimed = await services.registry.claimForIngest(vodId, Math.floor(Date.now() / 1000));
+  if (!claimed) {
+    throw new AppError("busy", "Эта запись уже разбирается.", {
+      hint: "Дождитесь окончания разбора — второй запуск испортил бы работу первому.",
+    });
+  }
+
   await services.registry.putStream({
     vodId,
     status: "processing",
@@ -143,10 +144,13 @@ export async function startStreamIngest(
     // Бокс не принял работу — разбора не будет, и держать запись в
     // `processing` нельзя: сутки она выглядела бы разбираемой, и ни
     // владелец, ни расписание не могли бы её тронуть.
+    // Причина — в журнал, а не в реестр: реестр читается публичным токеном,
+    // и текст ошибки увидел бы любой посетитель страницы.
     const message = error instanceof Error ? error.message : String(error);
+    console.error(`[разбор ${vodId}] запуск не удался: ${message}`);
     await services.registry.patchStream(vodId, {
       status: "failed",
-      reason: `Разбор не запустился: ${message}`,
+      reason: "Разбор не запустился. Запись попробуют разобрать заново.",
       processedAt: Math.floor(Date.now() / 1000),
     });
     throw error;
@@ -160,8 +164,10 @@ export async function handleGetDocument(vodId: string, services: Services): Prom
   return new Response(text, {
     headers: {
       "content-type": "text/markdown; charset=utf-8",
-      // Документ неизменен после создания — кэшировать безопасно и долго.
-      "cache-control": "public, max-age=31536000, immutable",
+      // Долгого кэширования здесь быть не может: повторный разбор заменяет
+      // документ по тому же адресу, и прежний `immutable` оставлял бы у
+      // читателя старый текст навсегда.
+      "cache-control": "no-cache",
     },
   });
 }
@@ -194,36 +200,46 @@ export async function handleDeleteStream(
   return Response.json({ vodId, deletedChunks });
 }
 
-// --- PUT /api/channel: настройка отслеживаемого канала (US2) ---
+// --- POST /api/streams/:vodId/reparse: повторный разбор (FR-028) ---
 
-const channelSchema = z.object({ login: z.string().trim().min(1).max(50) });
+/**
+ * Сколько попыток зачитывается запуску повторного разбора.
+ *
+ * Повтор — явное действие владельца, а не автоматики (FR-029): если он не
+ * удался, автоповтор не нужен, владелец запустит сам. Исчерпанные попытки
+ * ставят на этом точку, и при неудаче запись уходит в пропущенные с
+ * причиной, а прежние знания и документ остаются на месте (FR-032).
+ */
+const REPARSE_ATTEMPTS = MAX_ATTEMPTS - 1;
 
-export async function handleSetChannel(request: Request, env: Env, services: Services): Promise<Response> {
+/**
+ * Разбор известной трансляции заново.
+ *
+ * Отличается от добавления записи тем, что трансляция уже в реестре: запрет
+ * на повторную обработку действует для автоматики, а владелец снимает его
+ * этим действием. Работа и затраты те же, что у первого разбора, — запись
+ * скачивается и распознаётся заново (FR-035), — и идёт она по правилам и
+ * сведениям о стримере, действующим на момент запуска (FR-033).
+ */
+export async function handleReparseStream(
+  vodId: string,
+  request: Request,
+  env: Env,
+  services: Services,
+  callbackBaseUrl: string,
+): Promise<Response> {
   requireAdminToken(request, env);
 
-  const body = await parseJson(request);
-  const parsed = channelSchema.safeParse(body);
-  if (!parsed.success) {
-    throw new AppError("invalid_input", "Укажите { login } — логин канала на Twitch.");
+  const existing = await services.registry.getStream(vodId);
+  if (existing === undefined) {
+    throw new AppError("not_found", "Такой трансляции в реестре нет.");
+  }
+  // Проверка стоит и здесь, и в самом запуске: здесь — чтобы владелец получил
+  // понятный отказ, там — чтобы её не обошёл никакой другой путь (FR-030).
+  if (isBusy(existing, Math.floor(Date.now() / 1000))) {
+    throw new AppError("reparse_running", "Разбор этой трансляции уже идёт.");
   }
 
-  const channel = await services.twitch.getChannelByLogin(parsed.data.login);
-  const now = Math.floor(Date.now() / 1000);
-  await services.registry.setChannel({
-    twitchUserId: channel.id,
-    login: channel.login,
-    displayName: channel.displayName,
-    watchFrom: now,
-    addedAt: now,
-  });
-
-  return Response.json({ login: channel.login, displayName: channel.displayName, watchFrom: now });
-}
-
-async function parseJson(request: Request): Promise<unknown> {
-  try {
-    return await request.json();
-  } catch {
-    throw new AppError("invalid_input", "Тело запроса должно быть объектом JSON.");
-  }
+  await startStreamIngest(vodId, existing.source, services, callbackBaseUrl, REPARSE_ATTEMPTS);
+  return Response.json({ vodId, status: "processing" }, { status: 202 });
 }

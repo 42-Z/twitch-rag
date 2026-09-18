@@ -40,8 +40,14 @@
     "tests/integration",
     "build.ts"
   ],
-  // tests/contract и tests/unit/schedule-select проверяют код Worker и
-  // типизируются вместе с ним (tsconfig.worker.json) — там нет DOM-типов,
-  // конфликтующих с типами Workers.
-  "exclude": ["dist", "node_modules", "tests/contract", "tests/unit/schedule-select.test.ts"]
+  // tests/contract и тесты, тянущие окружение Worker, типизируются вместе с
+  // ним (tsconfig.worker.json) — там нет DOM-типов, конфликтующих с типами
+  // Workers.
+  "exclude": [
+    "dist",
+    "node_modules",
+    "tests/contract",
+    "tests/unit/schedule-select.test.ts",
+    "tests/unit/document-naming.test.ts"
+  ]
 }

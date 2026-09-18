@@ -1,29 +1,62 @@
 /**
- * Модели: распознавание речи, составление документа, эмбеддинги.
+ * Модели: распознавание речи, составление документа и его имени, эмбеддинги.
  *
  * Обращения идут официальным SDK OpenAI — меняется только базовый адрес.
- * OpenRouter совместим с этим интерфейсом во всех трёх видах вызовов, поэтому
+ * OpenRouter совместим с этим интерфейсом во всех видах вызовов, поэтому
  * отдельного клиента писать не нужно. Ключ живёт в секретах Worker и в
  * браузер не попадает.
  */
 
 import OpenAI, { toFile } from "openai";
-import { upstreamError, AppError } from "./errors.ts";
+import { AppError, upstreamError } from "./errors.ts";
 import type { TranscriptSegment } from "./time.ts";
+import {
+  DOCUMENT_NAME_RESPONSE_FORMAT,
+  DOCUMENT_RESPONSE_FORMAT,
+  documentNameSchema,
+  documentSchema,
+  type ComposedSection,
+} from "./document-schema.ts";
+import {
+  DOCUMENT_NAME_SYSTEM_PROMPT,
+  buildDocumentNameMessage,
+  buildDocumentSystemPrompt,
+  buildPartMessage,
+  buildTranscriptMessage,
+} from "./prompt.ts";
+
+export type { ComposedSection };
 
 export const BASE_URL = "https://openrouter.ai/api/v1";
 
 export const MODELS = {
   /** Даёт посегментные таймкоды — без них невозможна ссылка на момент записи. */
   speechToText: "openai/whisper-large-v3-turbo",
-  /** Контекст в 262 тысячи токенов: расшифровка эфира входит целиком. */
-  document: "inclusionai/ling-3.0-flash",
+  /**
+   * Составление документа и выработка имени. Контекст 1 048 576 токенов,
+   * потолок выхода 943 718: расшифровка эфира входит целиком, а рассуждения
+   * не съедают потолок, как у прежней модели.
+   */
+  document: "meta/muse-spark-1.3-contributor",
   /** 1536 измерений — столько же у индекса. */
   embedding: "openai/text-embedding-3-small",
 } as const;
 
-/** Выход модели ограничен, поэтому документ пишется в несколько проходов. */
-export const MAX_OUTPUT_TOKENS = 32768;
+/**
+ * Потолок выхода у выбранной модели — её собственный предел, а не наша
+ * оценка. Прежние 32 768 были занижены на порядок: у той модели в них
+ * упирались не документ, а её рассуждения, и половина проходов возвращалась
+ * пустой. Вход и выход делят один бюджет контекста, поэтому потолок выхода
+ * ограничен разницей между контекстом и расшифровкой.
+ */
+export const MAX_OUTPUT_TOKENS = 943718;
+
+/**
+ * Доля потолка, отданная рассуждениям. Значение задаётся явно, а не отдаётся
+ * на умолчание каталога: иначе поведение разбора поедет вместе с чужой
+ * настройкой. Замеры сделаны на `medium` — оно же умолчание каталога.
+ */
+const REASONING_EFFORT = "medium";
 
 export interface TranscriptionResult {
   segments: TranscriptSegment[];
@@ -36,10 +69,36 @@ export interface DocumentPartRequest {
   fullTranscript: string;
   /** Участок, который пишется в этом проходе. */
   part: { startSeconds: number; endSeconds: number };
-  streamTitle: string;
   publishedAt: string;
   categories: ReadonlyArray<{ title: string; startSeconds: number; endSeconds: number }>;
+  /** Сведения о стримере от владельца: имена, прозвища и понятия канала (FR-015). */
+  streamerInfo?: string;
+  /**
+   * Ключ закрепления за провайдером. Проходы одной записи обязаны попадать на
+   * тот же узел, иначе кэш входа не сработает: закрепление живёт десять минут
+   * без обращений и отключается ручным порядком провайдеров, поэтому задаётся
+   * ключом сессии, а не полем `provider.order`.
+   */
+  sessionId: string;
 }
+
+/**
+ * Поля OpenRouter, которых нет в описании OpenAI. SDK отправляет тело запроса
+ * как есть, но проверку типов такой объект не проходит: пересечение с
+ * собственным типом описывает их явно, вместо приведения `as any`.
+ */
+interface OpenRouterExtras {
+  reasoning: { effort: string };
+  /** Без этого провайдер, не поддержавший схему, молча проигнорирует её. */
+  provider: { require_parameters: boolean };
+  session_id: string;
+}
+
+const openRouterExtras = (sessionId: string): OpenRouterExtras => ({
+  reasoning: { effort: REASONING_EFFORT },
+  provider: { require_parameters: true },
+  session_id: sessionId,
+});
 
 export class OpenRouter {
   private readonly client: OpenAI;
@@ -93,25 +152,73 @@ export class OpenRouter {
    * модели не вмещает пересказ семи часов за раз.
    */
   async composeDocumentPart(request: DocumentPartRequest): Promise<ComposedSection[]> {
+    const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & OpenRouterExtras = {
+      model: MODELS.document,
+      max_completion_tokens: MAX_OUTPUT_TOKENS,
+      temperature: 0.3,
+      response_format: DOCUMENT_RESPONSE_FORMAT,
+      // Порядок сообщений — часть решения, а не оформление: неизменная
+      // расшифровка идёт перед меняющейся строкой про участок, иначе общим
+      // префиксом проходов остаётся одна системная инструкция, а вся масса
+      // текста читается заново по полной цене.
+      messages: [
+        { role: "system", content: buildDocumentSystemPrompt({ streamerInfo: request.streamerInfo ?? "" }) },
+        {
+          role: "user",
+          content: buildTranscriptMessage({
+            publishedAt: request.publishedAt,
+            categories: request.categories,
+            fullTranscript: request.fullTranscript,
+          }),
+        },
+        { role: "user", content: buildPartMessage(request.part) },
+      ],
+      ...openRouterExtras(request.sessionId),
+    };
+
     try {
-      const completion = await this.client.chat.completions.create({
-        model: MODELS.document,
-        max_tokens: MAX_OUTPUT_TOKENS,
-        temperature: 0.3,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: DOCUMENT_SYSTEM_PROMPT },
-          { role: "user", content: buildDocumentPrompt(request) },
-        ],
-      });
-      const text = completion.choices[0]?.message.content ?? "";
-      if (text.trim() === "") {
-        throw new AppError("upstream_unavailable", "Модель вернула пустой документ.");
-      }
-      return parseComposedSections(text);
+      return readDocumentChoice((await this.client.chat.completions.create(params)).choices?.[0]);
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw upstreamError("составление документа", error);
+    }
+  }
+
+  /**
+   * Имя документа — отдельным запросом по оглавлению (FR-041).
+   *
+   * На вход идут заголовки разделов с датой эфира, а не документ целиком:
+   * разделов десятки, а для имени хватает их тем. Заголовок трансляции с
+   * площадки сюда не попадает вовсе (FR-027).
+   */
+  async composeDocumentName(input: {
+    publishedAt: string;
+    sectionTitles: readonly string[];
+    sessionId: string;
+  }): Promise<string> {
+    const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & OpenRouterExtras = {
+      model: MODELS.document,
+      max_completion_tokens: MAX_OUTPUT_TOKENS,
+      temperature: 0.3,
+      response_format: DOCUMENT_NAME_RESPONSE_FORMAT,
+      messages: [
+        { role: "system", content: DOCUMENT_NAME_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: buildDocumentNameMessage({
+            publishedAt: input.publishedAt,
+            sectionTitles: input.sectionTitles,
+          }),
+        },
+      ],
+      ...openRouterExtras(input.sessionId),
+    };
+
+    try {
+      return readDocumentNameChoice((await this.client.chat.completions.create(params)).choices?.[0]);
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw upstreamError("выработка имени документа", error);
     }
   }
 
@@ -148,88 +255,108 @@ export class OpenRouter {
 }
 
 /**
- * Ответ просится в JSON, а не размеченным текстом, потому что время раздела —
- * число, и договориться о его записи словами не вышло: одна и та же модель на
- * трёх прогонах выдала `0:47:55`, `0:165` и голые секунды, и каждый раз разбор
- * терял вместе с непонятым заголовком часы эфира. В JSON число приходит числом.
+ * Ответ модели в том виде, в каком он нужен разбору. Описан структурно, а не
+ * типом SDK: так исходы проверяются без сети, а сам разбор не зависит от
+ * версии клиента.
  */
-const DOCUMENT_SYSTEM_PROMPT = `Ты составляешь документ о трансляции по её расшифровке.
-
-Ответ — только JSON такого вида, без markdown и пояснений вокруг:
-{"sections": [{"title": "Спор о правилах сервера", "startSeconds": 4040, "endSeconds": 4745, "text": "Текст раздела в несколько абзацев."}]}
-
-Правила:
-1. Пиши по-русски — и названия разделов, и текст. Расшифровка может прийти на любом языке: распознавание ошибается с языком на музыке и шуме и выдаёт куски эфира по-английски. Язык расшифровки на язык документа не влияет.
-2. Пиши связный человекочитаемый текст о содержании эфира, а не набор реплик и не список тезисов. Человек должен понять, о чём был стрим, прочитав документ и не открывая запись.
-3. Опирайся только на то, что прозвучало в расшифровке. Ничего не додумывай и не добавляй сведений извне.
-4. Разбей свой участок на разделы по темам. Поле title — собственное название темы в несколько слов, по тому, что в разделе происходит. Поля startSeconds и endSeconds — целые числа секунд от начала записи.
-5. Раздел должен быть понятен сам по себе, без чтения соседних разделов: называй участников, предметы и обстоятельства, а не «он», «это», «там же».
-6. Пропускай участки без внятной речи: музыку, тишину, заглушённые фрагменты. Разделов по ним не создавай.
-7. Разделы идут подряд по времени и покрывают весь участок целиком, без пропусков.
-8. Размер раздела — от нескольких абзацев; слишком мелкие темы объединяй.
-9. Никаких вступлений, заключений и обращений к читателю: в поле text только содержание раздела.`;
-
-function buildDocumentPrompt(request: DocumentPartRequest): string {
-  const categories = request.categories
-    .map((category) => `- ${category.title}: ${category.startSeconds}–${category.endSeconds} с`)
-    .join("\n");
-
-  return `Трансляция: «${request.streamTitle}»
-Дата эфира: ${request.publishedAt.slice(0, 10)}
-
-Категории эфира по времени:
-${categories === "" ? "- категории не указаны" : categories}
-
-Твой участок: с ${request.part.startSeconds} по ${request.part.endSeconds} секунду записи.
-Пиши разделы только про этот участок. Остальная расшифровка дана, чтобы ты понимал отсылки и не пересказывал одно и то же дважды.
-
-Расшифровка эфира целиком (время в секундах от начала записи):
-
-${request.fullTranscript}`;
-}
-
-/** Раздел, каким его вернула модель: категория проставляется позже, по времени. */
-export interface ComposedSection {
-  title: string;
-  startSeconds: number;
-  endSeconds: number;
-  text: string;
+export interface CompletionChoice {
+  finish_reason?: string | null;
+  message?: { refusal?: string | null; content?: string | null } | undefined;
 }
 
 /**
- * Разбор ответа модели. Режим JSON гарантирует синтаксис, но не содержимое:
- * раздел без текста или с временем задом наперёд отбрасывается здесь, чтобы
- * дальше по конвейеру шло только пригодное.
+ * Разбор ответа по трём исходам, каждому своему.
+ *
+ * Раньше из ответа брался только `content`, и всё остальное принималось за
+ * удачу. Из-за этого отказ модели выглядел невалидным ответом, обрыв по
+ * потолку — пустым документом, а ошибка в теле при статусе 200 — успехом.
  */
-export function parseComposedSections(raw: string): ComposedSection[] {
-  let parsed: unknown;
+export function readDocumentChoice(choice: CompletionChoice | undefined): ComposedSection[] {
+  const message = requireMessage(choice);
+  return parseComposedSections(message.content ?? "");
+}
+
+/** Имя документа: тот же разбор исходов, другая схема. */
+export function readDocumentNameChoice(choice: CompletionChoice | undefined): string {
+  const message = requireMessage(choice);
+  const parsed = documentNameSchema.safeParse(parseJson(message.content ?? ""));
+  if (!parsed.success) {
+    throw new AppError("upstream_unavailable", "Ответ модели об имени документа не соответствует схеме.");
+  }
+  // Имя уходит в шапку документа и в выдачу, поэтому приводится к одной
+  // строке: перенос и хвостовые пробелы там были бы видны.
+  const name = parsed.data.name.replace(/\s+/g, " ").trim();
+  if (name === "") {
+    throw new AppError("upstream_unavailable", "Модель вернула пустое имя документа.");
+  }
+  return name;
+}
+
+/** Общая часть разбора: отказ модели, обрыв по потолку и ответ без вариантов. */
+function requireMessage(choice: CompletionChoice | undefined): { refusal?: string | null; content?: string | null } {
+  if (choice === undefined) {
+    // Ответ 200 с ошибкой в теле приходит без вариантов вовсе, и от успеха
+    // его отличает именно это.
+    throw new AppError("upstream_unavailable", "Модель ответила без вариантов — обычно это ошибка в теле ответа.");
+  }
+  const message = choice.message;
+  if (message === undefined) {
+    throw new AppError("upstream_unavailable", "В ответе модели нет сообщения.");
+  }
+  // Отказ приходит не ошибкой, а полем `refusal` с остановкой `content_filter`,
+  // и в строгую схему он не укладывается: без отдельной проверки он выглядел
+  // бы невалидным ответом и уходил бы в бессмысленный повтор.
+  if (typeof message.refusal === "string" && message.refusal !== "") {
+    throw new AppError("model_refused", `Модель отказалась составлять документ: ${message.refusal}`);
+  }
+  if (choice.finish_reason === "content_filter") {
+    throw new AppError("model_refused", "Модель отказалась составлять документ: сработала модерация.");
+  }
+  if (choice.finish_reason === "length") {
+    throw new AppError("output_truncated", "Ответ модели оборван потолком выхода: он неполон.");
+  }
+  return message;
+}
+
+function parseJson(raw: string): unknown {
   try {
-    parsed = JSON.parse(raw);
+    return JSON.parse(raw);
   } catch {
     throw new AppError("upstream_unavailable", "Модель вернула не JSON.");
   }
+}
 
-  const list = (parsed as { sections?: unknown }).sections;
-  if (!Array.isArray(list)) {
-    throw new AppError("upstream_unavailable", "В ответе модели нет разделов.");
+/**
+ * Разбор разделов. Строгая схема обязывает модель, но не заменяет проверку:
+ * обрыв по потолку ломает и её, а раздел без времени в документе недопустим
+ * (FR-037). Поэтому ответ сверяется со схемой, а негодные разделы отсеиваются
+ * здесь, чтобы дальше по конвейеру шло только пригодное.
+ */
+export function parseComposedSections(raw: string): ComposedSection[] {
+  const parsed = documentSchema.safeParse(parseJson(raw));
+  if (!parsed.success) {
+    throw new AppError("upstream_unavailable", "Ответ модели не соответствует схеме документа.");
   }
 
+  // Пустой список — законный ответ для участка, где не звучало речи: там
+  // документировать нечего, и инструкция разрешает ответить именно так.
+  // Пропуск при этом не остаётся незамеченным: разрыв по времени попадает в
+  // реестр причиной (`findCoverageGaps`), а участок без единого раздела при
+  // непустой расшифровке виден по нему же.
   const sections: ComposedSection[] = [];
-  for (const item of list) {
-    const section = item as Record<string, unknown>;
-    const title = typeof section["title"] === "string" ? section["title"].trim() : "";
-    const text = typeof section["text"] === "string" ? section["text"].trim() : "";
-    const start = Math.round(Number(section["startSeconds"]));
-    const end = Math.round(Number(section["endSeconds"]));
-    if (title === "" || text === "" || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-      continue;
-    }
-    sections.push({ title, startSeconds: Math.max(0, start), endSeconds: end, text });
+  for (const section of parsed.data.sections) {
+    const title = section.title.trim();
+    const text = section.text.trim();
+    // Обрезка идёт до проверки, а не после: схема допускает любое целое, и
+    // раздел с отрицательным концом проходил проверку по исходным значениям,
+    // а после обрезки начала нулём получался раздел, у которого начало
+    // больше конца, — ровно то, что проверка и запрещает.
+    const startSeconds = Math.max(0, section.startSeconds);
+    const endSeconds = Math.max(0, section.endSeconds);
+    if (title === "" || text === "" || endSeconds <= startSeconds) continue;
+    sections.push({ title, text, startSeconds, endSeconds });
   }
 
-  if (sections.length === 0) {
-    throw new AppError("upstream_unavailable", "Модель не дала ни одного пригодного раздела.");
-  }
   return sections;
 }
 

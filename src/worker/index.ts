@@ -18,9 +18,10 @@ import {
   handleAddStream,
   handleDeleteStream,
   handleGetDocument,
-  handleSetChannel,
-  requireAdminToken,
+  handleReparseStream,
 } from "./routes/streams.ts";
+import { handleSetChannel, handleSetStreamer } from "./routes/channel.ts";
+import { requireAdminToken } from "./routes/owner.ts";
 import { runScheduledCheck } from "./schedule.ts";
 
 export { StreamIngestWorkflow } from "./workflow.ts";
@@ -91,6 +92,13 @@ const ROUTES: Route[] = [
   },
 
   {
+    method: "POST",
+    pattern: "/api/streams/:vodId/reparse",
+    handler: (request, env, params) =>
+      handleReparseStream(params.vodId ?? "", request, env, createServices(env), originOf(request)),
+  },
+
+  {
     method: "DELETE",
     pattern: "/api/streams/:vodId",
     handler: (request, env, params) =>
@@ -101,6 +109,12 @@ const ROUTES: Route[] = [
     method: "PUT",
     pattern: "/api/channel",
     handler: (request, env) => handleSetChannel(request, env, createServices(env)),
+  },
+
+  {
+    method: "PUT",
+    pattern: "/api/streamer",
+    handler: (request, env) => handleSetStreamer(request, env, createServices(env)),
   },
 
   {

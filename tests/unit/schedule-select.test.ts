@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { selectNextVideo, retireExhausted } from "../../src/worker/schedule.ts";
+import { selectNextVideo, retireExhausted, runScheduledCheck } from "../../src/worker/schedule.ts";
 import { MAX_ATTEMPTS, type StreamRecord } from "../../src/shared/registry.ts";
 import type { TwitchVideo } from "../../src/shared/twitch.ts";
 
@@ -155,8 +155,38 @@ describe("исчерпавшие попытки", () => {
     await retireExhausted(known, services);
 
     expect(patched[0]?.patch["status"]).toBe("skipped");
-    expect(patched[0]?.patch["reason"]).toBe("сервис недоступен");
     expect(known.get("1")?.status).toBe("skipped");
+  });
+
+  test("прежняя причина не переносится в пропуск — она обещала повтор", async () => {
+    // Пока запись в отказе, её берут заново, и причина об этом и говорит.
+    // После перевода в пропущенные это уже неправда: автоматика к такой
+    // записи не вернётся, и оставленная причина обманывала бы владельца.
+    const patched: Record<string, unknown>[] = [];
+    const known = new Map<string, StreamRecord>([
+      [
+        "1",
+        record({
+          vodId: "1",
+          status: "failed",
+          attempts: MAX_ATTEMPTS,
+          reason: "Разбор не удался. Запись попробуют разобрать заново.",
+        }),
+      ],
+    ]);
+    const services = {
+      registry: {
+        patchStream: async (_vodId: string, patch: Record<string, unknown>) => {
+          patched.push(patch);
+        },
+      },
+    } as unknown as Parameters<typeof retireExhausted>[1];
+
+    await retireExhausted(known, services);
+
+    const reason = String(patched[0]?.["reason"]);
+    expect(reason).not.toContain("Запись попробуют разобрать заново");
+    expect(reason).toContain("вручную");
   });
 
   test("недоисчерпанные и уже готовые не трогаются", async () => {
@@ -177,5 +207,40 @@ describe("исчерпавшие попытки", () => {
 
     expect(patched).toHaveLength(0);
     expect(known.get("1")?.status).toBe("failed");
+  });
+});
+
+describe("сбой опроса", () => {
+  /** Отметка о проверке читается публичным токеном — туда идёт своя фраза. */
+  test("причина сбоя в реестр не пишется", async () => {
+    const checks: Array<Record<string, unknown>> = [];
+    const services = {
+      registry: {
+        getChannel: async () => ({
+          twitchUserId: "1",
+          login: "channel",
+          displayName: "Канал",
+          watchFrom: 0,
+          addedAt: 0,
+        }),
+        knownVodIds: async () => [],
+        getStream: async () => undefined,
+        recordCheck: async (mark: Record<string, unknown>) => {
+          checks.push(mark);
+        },
+      },
+      twitch: {
+        listArchive: async () => {
+          throw new Error("Twitch ответил 503: service unavailable");
+        },
+        getLiveStreamId: async () => undefined,
+      },
+    } as unknown as Parameters<typeof runScheduledCheck>[0];
+
+    await runScheduledCheck(services, "https://example.workers.dev");
+
+    const error = String(checks[0]?.["error"] ?? "");
+    expect(error).not.toContain("503");
+    expect(error).toBe("Проверка новых записей не удалась. Следующая будет через час.");
   });
 });

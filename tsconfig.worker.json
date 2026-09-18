@@ -29,6 +29,12 @@
     }
   },
 
-  "include": ["src/worker", "src/shared", "tests/contract", "tests/unit/schedule-select.test.ts"],
+  "include": [
+    "src/worker",
+    "src/shared",
+    "tests/contract",
+    "tests/unit/schedule-select.test.ts",
+    "tests/unit/document-naming.test.ts"
+  ],
   "exclude": ["dist", "node_modules"]
 }

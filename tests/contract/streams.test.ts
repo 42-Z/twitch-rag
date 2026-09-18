@@ -2,12 +2,13 @@ import { test, expect, describe } from "bun:test";
 import {
   handleAddStream,
   handleDeleteStream,
-  requireAdminToken,
+  handleReparseStream,
   startStreamIngest,
 } from "../../src/worker/routes/streams.ts";
+import { requireAdminToken } from "../../src/worker/routes/owner.ts";
 import { AppError } from "../../src/shared/errors.ts";
 import type { Env, Services } from "../../src/worker/env.ts";
-import type { StreamRecord } from "../../src/shared/registry.ts";
+import { MAX_ATTEMPTS, type StreamRecord } from "../../src/shared/registry.ts";
 
 /**
  * Контракт проверяется без сети: площадка и хранилища — простые заглушки,
@@ -22,6 +23,8 @@ function envWith(overrides: Partial<Env> = {}): Env {
 function servicesWith(options: {
   existing?: StreamRecord;
   video?: { title: string; url: string; publishedAt: string; publishedAtUnix: number; durationSeconds: number; viewable: string; mutedSegments: never[] };
+  /** Запись занята: хранилище отказало в занятии. */
+  busyClaim?: boolean;
 } = {}): { services: Services; puts: unknown[]; boxCalls: unknown[]; deletedChunks: number } {
   const puts: unknown[] = [];
   const boxCalls: unknown[] = [];
@@ -29,6 +32,9 @@ function servicesWith(options: {
   const services = {
     registry: {
       getStream: async () => options.existing,
+      // Занятие записи: заглушка по умолчанию отдаёт её запуску. Проверки,
+      // которым нужен отказ, задают busyClaim.
+      claimForIngest: async () => options.busyClaim !== true,
       putStream: async (record: unknown) => {
         puts.push(record);
       },
@@ -298,5 +304,114 @@ describe("DELETE /api/streams/:vodId", () => {
     } catch (error) {
       expect((error as AppError).code).toBe("unauthorized");
     }
+  });
+});
+
+describe("POST /api/streams/:vodId/reparse", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  const reparseRequest = (token = ADMIN_TOKEN): Request =>
+    new Request("https://x/api/streams/2345678901/reparse", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+  test("разобранная трансляция уходит в разбор заново", async () => {
+    const { services, puts, boxCalls } = servicesWith({
+      existing: streamRecord({ status: "ready", processedAt: NOW - 3600 }),
+    });
+
+    const response = await handleReparseStream(
+      "2345678901",
+      reparseRequest(),
+      envWith(),
+      services,
+      "https://worker.example",
+    );
+
+    expect(response.status).toBe(202);
+    expect(boxCalls).toHaveLength(1);
+    expect(puts).toHaveLength(1);
+    expect((puts[0] as { status: string }).status).toBe("processing");
+  });
+
+  test("идущий разбор отвергается с понятной причиной", async () => {
+    const { services, boxCalls } = servicesWith({
+      existing: streamRecord({ processedAt: NOW - 60 }),
+    });
+
+    try {
+      await handleReparseStream("2345678901", reparseRequest(), envWith(), services, "https://worker.example");
+      throw new Error("ожидалась ошибка reparse_running");
+    } catch (error) {
+      expect((error as AppError).code).toBe("reparse_running");
+      expect((error as AppError).status).toBe(409);
+    }
+    expect(boxCalls).toHaveLength(0);
+  });
+
+  test("неизвестная трансляция — not_found", async () => {
+    const { services, boxCalls } = servicesWith();
+
+    try {
+      await handleReparseStream("2345678901", reparseRequest(), envWith(), services, "https://worker.example");
+      throw new Error("ожидалась ошибка not_found");
+    } catch (error) {
+      expect((error as AppError).code).toBe("not_found");
+    }
+    expect(boxCalls).toHaveLength(0);
+  });
+
+  test("запись, занятая другим запуском, не запускается второй раз", async () => {
+    // Занятие решается хранилищем одним действием: проверка выше читает
+    // запись отдельно от записи, и между ними второй запуск успел бы
+    // проскочить. Здесь запись свежая, то есть проверка выше её пропускает,
+    // а занятие — нет; так и выглядит гонка со стороны проигравшего.
+    const { services, puts, boxCalls } = servicesWith({
+      existing: streamRecord({ status: "failed" }),
+      busyClaim: true,
+    });
+
+    try {
+      await handleReparseStream("2345678901", reparseRequest(), envWith(), services, "https://worker.example");
+      throw new Error("ожидалась ошибка busy");
+    } catch (error) {
+      expect((error as AppError).code).toBe("busy");
+      expect((error as AppError).status).toBe(409);
+    }
+    expect(boxCalls).toHaveLength(0);
+    expect(puts).toHaveLength(0);
+  });
+
+  test("без токена владельца повтор не запускается", async () => {
+    const { services, boxCalls } = servicesWith({
+      existing: streamRecord({ status: "ready", processedAt: NOW - 3600 }),
+    });
+
+    try {
+      await handleReparseStream(
+        "2345678901",
+        reparseRequest("wrong-token"),
+        envWith(),
+        services,
+        "https://worker.example",
+      );
+      throw new Error("ожидалась ошибка unauthorized");
+    } catch (error) {
+      expect((error as AppError).code).toBe("unauthorized");
+    }
+    expect(boxCalls).toHaveLength(0);
+  });
+
+  test("неудачный повтор не достаётся автоматике", async () => {
+    // Повтор — явное действие владельца: если он не удался, автоповтор не
+    // нужен. Иначе почасовой опрос качал бы и распознавал эфир заново без
+    // спроса, а счёт попыток у записи уже был исчерпан первым разбором.
+    const { services, puts } = servicesWith({
+      existing: streamRecord({ status: "ready", attempts: 1, processedAt: NOW - 3600 }),
+    });
+
+    await handleReparseStream("2345678901", reparseRequest(), envWith(), services, "https://worker.example");
+
+    expect((puts[0] as { attempts: number }).attempts).toBeGreaterThanOrEqual(MAX_ATTEMPTS);
   });
 });

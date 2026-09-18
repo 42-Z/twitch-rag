@@ -17,7 +17,9 @@ import { DATE_PATTERN } from "./routes/knowledge.ts";
 import type { Env } from "./env.ts";
 import { createServices } from "./env.ts";
 import { formatClock } from "../shared/time.ts";
+import { documentName } from "../shared/document-name.ts";
 import {
+  dateToUnix,
   knowledgeStats,
   parseSearchRequest,
   searchKnowledge,
@@ -101,7 +103,7 @@ export function createMcpServer(env: Env): McpServer {
     "list_streams",
     {
       description:
-        "Перечислить разобранные трансляции с датами и категориями. Использовать, когда вопрос касается конкретного эфира или периода, а не темы.",
+        "Перечислить разобранные трансляции с именами документов, датами и категориями. Имя документа выработано по содержанию эфира. Использовать, когда вопрос касается конкретного эфира или периода, а не темы.",
       inputSchema: {
         from: z.string().regex(DATE_PATTERN, "Ожидается дата вида ГГГГ-ММ-ДД").optional().describe("Не раньше этой даты эфира, ГГГГ-ММ-ДД"),
         to: z.string().regex(DATE_PATTERN, "Ожидается дата вида ГГГГ-ММ-ДД").optional().describe("Не позже этой даты эфира, ГГГГ-ММ-ДД"),
@@ -110,17 +112,26 @@ export function createMcpServer(env: Env): McpServer {
     },
     async (input) => {
       // Данные берутся из реестра: векторный поиск здесь ни при чём.
+      // Границы считаются той же проверкой, что и в поиске: образец даты
+      // пропускает несуществующие числа, и без неё в запрос ушёл бы NaN.
+      const fromUnix = input.from === undefined ? undefined : dateToUnix(input.from, "начала");
+      const toUnix = input.to === undefined ? undefined : dateToUnix(input.to, "конца") + 86399;
       const streams = await services.registry.listStreams({
         limit: input.limit ?? 20,
-        ...(input.from === undefined ? {} : { fromUnix: Math.floor(Date.parse(`${input.from}T00:00:00Z`) / 1000) }),
-        ...(input.to === undefined ? {} : { toUnix: Math.floor(Date.parse(`${input.to}T23:59:59Z`) / 1000) }),
+        ...(fromUnix === undefined ? {} : { fromUnix }),
+        ...(toUnix === undefined ? {} : { toUnix }),
       });
       const ready = streams.filter((stream) => stream.status === "ready");
 
       const lines = ready.map((stream) => {
         const categories = stream.categories.map((chapter) => chapter.title).join(", ");
         const duration = formatClock(stream.durationSeconds);
-        return `${stream.publishedAt.slice(0, 10)} · «${stream.title}» · ${duration} · разделов: ${stream.sectionCount ?? 0}${categories === "" ? "" : ` · ${categories}`}`;
+        // Имени может не быть: запись разобрана до того, как документы стали
+        // именоваться. Пустые кавычки читались бы как пропуск в ответе, а
+        // «без имени» говорит, что это состояние записи, а не сбой вывода.
+        const name = documentName(stream);
+        const label = name === "" ? "без имени" : `«${name}»`;
+        return `${stream.publishedAt.slice(0, 10)} · ${label} · ${duration} · разделов: ${stream.sectionCount ?? 0}${categories === "" ? "" : ` · ${categories}`}`;
       });
 
       return {
@@ -130,7 +141,7 @@ export function createMcpServer(env: Env): McpServer {
         structuredContent: {
           streams: ready.map((stream) => ({
             vodId: stream.vodId,
-            title: stream.title,
+            title: documentName(stream),
             publishedAt: stream.publishedAt,
             durationSeconds: stream.durationSeconds,
             categories: stream.categories.map((chapter) => chapter.title),

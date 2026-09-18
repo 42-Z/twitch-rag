@@ -1,5 +1,5 @@
 /**
- * Разбор записи: распознать → составить документ → проиндексировать.
+ * Разбор записи: распознать → составить документ → дать имя → проиндексировать.
  *
  * Оформлено шагами с независимыми повторами, а не одним длинным вызовом:
  * на семичасовой эфир приходится больше сорока кусков, и один вызов не прошёл
@@ -11,20 +11,28 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import type { Env, IngestParams, Services } from "./env.ts";
 import { createServices } from "./env.ts";
 import { shiftSegments, prevailingLanguage, formatDuration } from "../shared/time.ts";
-import { vodUrlAt } from "../shared/time.ts";
 import { renderTranscript } from "../shared/openrouter.ts";
 import { planDocumentParts, assignCategories, uniqueCategories } from "../shared/categories.ts";
-import {
-  normalizeSections,
-  chunkSection,
-  buildContextLine,
-  type ParsedSection,
-} from "../shared/sections.ts";
+import { normalizeSections, type ParsedSection } from "../shared/sections.ts";
+import { buildChunks } from "../shared/chunks.ts";
 import { renderDocumentHeader, Documents } from "../shared/documents.ts";
-import type { ChunkToIndex } from "../shared/knowledge.ts";
+import { chunkId } from "../shared/knowledge.ts";
+import { composePart } from "../shared/document-parts.ts";
 
-/** Сколько знаков пересказа модель успевает выдать за один проход. */
-const CHARS_PER_PART = 60000;
+/**
+ * Сколько знаков расшифровки приходится на один проход.
+ *
+ * Значение выбрано замером, а не по запасу потолка: доля сказанного, которая
+ * доходит до документа, падает с ростом прохода — на семидесяти минутах эфира
+ * это 51 % и восемь потерянных мест, на сорока 68 % и ни одной потери, на
+ * тридцати 64 % и ниже уже не растёт. Потолок выхода тут ни при чём: расход
+ * прохода — тысячи токенов из девятисот тысяч возможных, ограничивает не он,
+ * а склонность модели сжимать тем сильнее, чем больше перед ней текста.
+ *
+ * Плата за мельче — вдвое больше вызовов модели и швов между проходами;
+ * вызов стоит доли цента, а швы приходятся на смену темы.
+ */
+const CHARS_PER_PART = 30000;
 /** Сколько кусков идёт в одно обращение за эмбеддингами. */
 const EMBED_BATCH = 32;
 /** Разрыв больше этого означает пропущенный участок эфира, а не паузу в речи. */
@@ -40,6 +48,16 @@ const transcriptFullKey = (vodId: string): string => `transcript/${vodId}/full.t
 /** Временное при разборе: удаляется вместе с аудио, каким бы ни был исход. */
 const TEMPORARY_PREFIXES = ["audio/", "transcript/"] as const;
 
+/**
+ * Что владелец видит вместо причины отказа.
+ *
+ * Фраза стоит здесь, а не собирается из случившегося, потому что причина
+ * сбоя наружу не идёт вовсе: она остаётся в журнале. Пока запись в отказе,
+ * её берут заново — а когда попытки исчерпаются, причину заменит запись о
+ * пропуске (schedule.ts).
+ */
+const FAILURE_REASON = "Разбор не удался. Запись попробуют разобрать заново.";
+
 export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> {
   override async run(event: Readonly<WorkflowEvent<IngestParams>>, step: WorkflowStep): Promise<void> {
     const params = event.payload;
@@ -53,10 +71,17 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       // разбиты по кускам. Забытое подчищает почасовая уборка по возрасту
       // (`cleanupStaleAudio` в index.ts).
       const message = error instanceof Error ? error.message : String(error);
+      // Причина сбоя уходит в журнал и только туда: в реестр она не пишется,
+      // а реестр читается публичным токеном — текст ошибки увидел бы любой
+      // посетитель страницы.
+      console.error(`[разбор ${params.vodId}] ${message}`);
       if (!isEngineReset(message) && !(await isAlreadyFinished(params.vodId, services))) {
         // Запись не должна остаться в processing навсегда — её возьмут заново
         // на следующем опросе (schedule.ts проверяет attempts).
-        await services.registry.patchStream(params.vodId, { status: "failed", reason: message });
+        await services.registry.patchStream(params.vodId, {
+          status: "failed",
+          reason: FAILURE_REASON,
+        });
       }
       throw error;
     }
@@ -158,6 +183,12 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       return text.length;
     });
 
+    // Сведения о стримере читаются один раз на разбор: они уходят в системную
+    // инструкцию каждого прохода, и брать их заново незачем (FR-015).
+    const streamerInfo = await step.do("прочитать сведения о стримере", async () => {
+      return (await services.registry.getChannel())?.streamerInfo ?? "";
+    });
+
     // --- составление документа ---
     // В каждом проходе модель получает расшифровку целиком, но пишет только
     // свой участок: иначе отсылки внутри эфира теряют смысл.
@@ -169,43 +200,59 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       const composed = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () => {
         const object = await this.env.AUDIO.get(transcriptFullKey(params.vodId));
         if (object === null) throw new Error("склеенная расшифровка исчезла из хранилища");
-        return await services.models.composeDocumentPart({
-          fullTranscript: await object.text(),
+        return await composePart(services.models, {
+          transcript: await object.text(),
           part,
-          streamTitle: params.title,
           publishedAt: params.publishedAt,
           categories: params.categories,
+          streamerInfo,
+          // Ключ закрепления за провайдером на всю запись: проходы одной
+          // записи должны попадать на тот же узел, иначе кэш входа не сработает.
+          sessionId: params.vodId,
         });
       });
       written.push(...composed.map((section) => ({ ...section, category: "" })));
     }
 
     // --- разделы ---
-    const sections = await step.do("привести разделы к рабочему виду", async () => {
-      const ordered = [...written].sort((a, b) => a.startSeconds - b.startSeconds);
-      const withCategories = assignCategories(normalizeSections(ordered), params.categories);
-      if (withCategories.length === 0) {
-        throw new Error("после приведения не осталось ни одного раздела");
-      }
-      return withCategories;
-    });
+    // Не шагом. Результат шага площадка хранит в состоянии экземпляра, и его
+    // размер ограничен мегабайтом: здесь же в руках оказывается документ
+    // целиком, а на очень длинном эфире он к этому пределу подходит. Работа
+    // эта чистая и упасть не может — ей нечего повторять, — а переменные
+    // прогона при переигровке восстанавливаются из результатов шагов выше, и
+    // в состояние ничего лишнего не ложится.
+    const ordered = [...written].sort((a, b) => a.startSeconds - b.startSeconds);
+    const sections = assignCategories(normalizeSections(ordered), params.categories);
+    if (sections.length === 0) {
+      throw new Error("после приведения не осталось ни одного раздела");
+    }
 
     const gaps = findCoverageGaps(sections, params.durationSeconds);
     if (gaps.length > 0) {
       // Разрыв во времени означает пропущенный кусок эфира. Документ всё
       // равно сохраняется — терять разобранное из-за дыры нельзя, — но
-      // изъян попадает в реестр, а не остаётся незамеченным.
+      // изъян попадает в реестр, а не остаётся незамеченным (FR-040).
       console.warn(`разрывы покрытия по ${params.vodId}: ${JSON.stringify(gaps)}`);
     }
 
-    // --- индексация ---
-    const chunksToIndex = buildChunks(sections, params, language);
+    // --- имя документа ---
+    // Отдельным запросом по оглавлению (FR-041): имя нужно и в шапке
+    // документа, и в метаданных кусков, и в реестре, поэтому вырабатывается
+    // до индексации. Заголовок с площадки в запрос не идёт вовсе (FR-027).
+    const docTitle = await step.do("выработать имя документа", async () => {
+      return await services.models.composeDocumentName({
+        publishedAt: params.publishedAt,
+        sectionTitles: sections.map((section) => section.title),
+        sessionId: params.vodId,
+      });
+    });
 
-    // Повторный разбор делит эфир на разделы заново, и куски прошлого разбора
-    // не обязательно перезаписываются: их номера могут не совпасть. Без этой
-    // уборки в выдачу попадала бы смесь двух разборов одной записи.
-    await step.do("убрать разделы прошлого разбора", async () => {
-      return await services.knowledge.removeStream(params.vodId);
+    // --- индексация ---
+    const chunksToIndex = buildChunks({
+      sections,
+      stream: { vodId: params.vodId, publishedAt: params.publishedAt },
+      language,
+      docTitle,
     });
 
     for (let offset = 0; offset < chunksToIndex.length; offset += EMBED_BATCH) {
@@ -219,12 +266,24 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       });
     }
 
+    // Повторный разбор делит эфир на разделы заново, и куски прошлого разбора
+    // не обязательно перезаписываются: их номера могут не совпасть. Новые
+    // куски к этому моменту уже записаны, и убираются только те прежние,
+    // которых среди них нет: снести всё перед записью значило бы оставить
+    // трансляцию без знаний, если повтор не удастся (FR-032).
+    await step.do("убрать куски прошлого разбора", async () => {
+      const fresh = new Set(
+        chunksToIndex.map((chunk) => chunkId(chunk.vodId, chunk.sectionIndex, chunk.chunkIndex)),
+      );
+      return await services.knowledge.removeExcept(params.vodId, fresh);
+    });
+
     // --- документ и реестр ---
     // Состояние `ready` выставляется последним действием: до этого момента
     // запись не считается разобранной и будет взята заново.
     await step.do("сохранить документ", async () => {
       const header = renderDocumentHeader({
-        title: params.title,
+        name: docTitle,
         publishedAt: params.publishedAt,
         durationSeconds: params.durationSeconds,
         categories: uniqueCategories(params.categories),
@@ -238,6 +297,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     await step.do("отметить запись разобранной", async () => {
       await services.registry.patchStream(params.vodId, {
         status: "ready",
+        docTitle,
         language,
         sectionCount: sections.length,
         chunkCount: chunksToIndex.length,
@@ -328,7 +388,7 @@ function formatRange(section: ParsedSection): string {
   return section.category === "" ? range : `${range} · ${section.category}`;
 }
 
-/** Участки эфира, не покрытые ни одним разделом (FR-019). */
+/** Участки эфира, не покрытые ни одним разделом (FR-040). */
 export function findCoverageGaps(
   sections: readonly ParsedSection[],
   durationSeconds: number,
@@ -349,44 +409,3 @@ export function findCoverageGaps(
   return gaps;
 }
 
-/** Разделы превращаются в куски с контекстной строкой и метаданными для выдачи. */
-export function buildChunks(
-  sections: readonly ParsedSection[],
-  params: IngestParams,
-  language: string,
-): Array<Omit<ChunkToIndex, "vector">> {
-  const result: Array<Omit<ChunkToIndex, "vector">> = [];
-
-  sections.forEach((section, sectionIndex) => {
-    const contextLine = buildContextLine({
-      publishedAt: params.publishedAt,
-      category: section.category,
-      sectionTitle: section.title,
-    });
-
-    for (const chunk of chunkSection(section, contextLine)) {
-      result.push({
-        vodId: params.vodId,
-        sectionIndex,
-        chunkIndex: chunk.chunkIndex,
-        data: chunk.text,
-        metadata: {
-          vodId: params.vodId,
-          title: params.title,
-          publishedAt: params.publishedAt,
-          publishedAtUnix: Math.floor(new Date(params.publishedAt).getTime() / 1000),
-          category: section.category,
-          sectionIndex,
-          sectionTitle: section.title,
-          sectionText: section.text,
-          startSeconds: section.startSeconds,
-          endSeconds: section.endSeconds,
-          url: vodUrlAt(params.vodId, section.startSeconds),
-          language,
-        },
-      });
-    }
-  });
-
-  return result;
-}

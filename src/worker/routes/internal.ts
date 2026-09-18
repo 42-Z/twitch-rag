@@ -25,6 +25,8 @@ export interface IngestFailedBody {
   failed: true;
   code: string;
   message: string;
+  /** Номер захода. Отсутствует у прогонов прежней сборки — тогда отказ берётся как есть. */
+  runId?: string;
 }
 
 export function requireIngestSecret(request: Request, env: Env): void {
@@ -42,6 +44,23 @@ function isFailure(body: unknown): body is IngestFailedBody {
 const PERMANENT_FAILURES = new Set(["subscriber_only", "not_found", "geo_blocked"]);
 
 /**
+ * Что владелец видит вместо сообщения бокса.
+ *
+ * Текст берётся свой, а не присланный: бокс — сторона, которой мы не
+ * распоряжаемся, а причина ложится в реестр, который читается публичным
+ * токеном. Незнакомый код тоже получает свою фразу, а не пришедшую строку.
+ */
+const FAILURE_REASONS: Record<string, string> = {
+  subscriber_only: "Запись доступна только подписчикам канала.",
+  not_found: "Запись удалена или недоступна.",
+  geo_blocked: "Запись недоступна из этого региона.",
+  download_failed: "Запись не удалось скачать. Попробуем ещё раз.",
+};
+
+/** Отказ, о котором ничего не известно, — считается временным и повторяется. */
+const UNKNOWN_FAILURE_REASON = "Запись не удалось подготовить. Попробуем ещё раз.";
+
+/**
  * Инстанс Workflow называется по записи и прогону: `create` с занятым именем
  * бросает ошибку, и это ровно нужный признак повтора. Реестр для дедупликации
  * не годится — запись уже стоит в `processing` с того момента, как разбор
@@ -56,6 +75,17 @@ const PERMANENT_FAILURES = new Set(["subscriber_only", "not_found", "geo_blocked
  */
 function workflowInstanceId(vodId: string, runId: string): string {
   return `ingest-${vodId}-${runId}`;
+}
+
+/** Начался ли разбор этого захода. */
+async function instanceStarted(env: Env, vodId: string, runId: string): Promise<boolean> {
+  try {
+    await env.INGEST.get(workflowInstanceId(vodId, runId));
+    return true;
+  } catch {
+    // Нет разбора — нет и запоздания: обычный отказ, его и применяем.
+    return false;
+  }
 }
 
 /** Имя прогона идёт в идентификатор инстанса, поэтому форма проверяется. */
@@ -86,9 +116,22 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
     // считается временным — ошибиться в сторону повтора дешевле.
     const permanent = PERMANENT_FAILURES.has(body.code);
     const status = permanent ? "skipped" : "failed";
+    // Присланное боксом сообщение остаётся в журнале: в реестр идёт своя
+    // фраза, потому что реестр читается публичным токеном.
+    console.error(`[разбор ${body.vodId}] отказ бокса ${body.code}: ${body.message}`);
+
+    // Отказ, пришедший после того, как разбор этого же захода уже начался, —
+    // запоздавший: это тот заход, у которого не дошёл ответ на сигнал
+    // готовности. Помечать запись отказавшей нельзя: разбор идёт, а помеченная
+    // запись попадёт под автоматический повтор и пойдёт второй раз (FR-029).
+    if (body.runId !== undefined && (await instanceStarted(env, body.vodId, body.runId))) {
+      console.error(`[разбор ${body.vodId}] отказ захода ${body.runId} запоздал — разбор уже идёт`);
+      return Response.json({ vodId: body.vodId, status: "processing" });
+    }
+
     await services.registry.patchStream(body.vodId, {
       status,
-      reason: body.message,
+      reason: FAILURE_REASONS[body.code] ?? UNKNOWN_FAILURE_REASON,
       processedAt: nowUnix(),
     });
     return Response.json({ vodId: body.vodId, status });
@@ -102,9 +145,10 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
 
   const existing = await services.registry.getStream(payload.vodId);
 
+  // Заголовок из сигнала бокса в разбор не передаётся: он не участвует ни в
+  // документе, ни в имени (FR-027) и остаётся служебным полем реестра.
   const params: IngestParams = {
     vodId: payload.vodId,
-    title: payload.title,
     url: `https://www.twitch.tv/videos/${payload.vodId}`,
     publishedAt: payload.publishedAt,
     durationSeconds: payload.durationSeconds,

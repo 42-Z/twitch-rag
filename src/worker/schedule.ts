@@ -10,6 +10,7 @@
 import type { Services } from "./env.ts";
 import { AppError } from "../shared/errors.ts";
 import { startStreamIngest } from "./routes/streams.ts";
+import { nameDocumentsWithoutNames } from "./naming.ts";
 import { MAX_ATTEMPTS, isStale, type StreamRecord } from "../shared/registry.ts";
 import type { TwitchVideo } from "../shared/twitch.ts";
 
@@ -68,13 +69,20 @@ const ARCHIVE_MAX_PAGES = 5;
  * модель данных. Без перехода запись навсегда оставалась «неудачной»: в
  * списке владельца она висела как недоделанная, а в сводке знаний не
  * считалась ни разобранной, ни пропущенной.
+ *
+ * Причина пишется своя, а не берётся из прежней. Прежняя говорит, что запись
+ * попробуют разобрать заново, и это правда ровно до этого перехода: дальше
+ * автоматика к пропущенной записи не возвращается, и оставленная причина
+ * обещала бы то, чего не будет. Что запись можно вернуть вручную — сказано
+ * затем, чтобы владелец не остался с пропуском без выхода.
  */
+const EXHAUSTED_REASON = "Разбор не удался за отведённое число попыток. Разобрать запись заново можно вручную.";
+
 export async function retireExhausted(known: Map<string, StreamRecord>, services: Services): Promise<void> {
   for (const [vodId, record] of known) {
     if (record.status !== "failed" || record.attempts < MAX_ATTEMPTS) continue;
-    const reason = record.reason ?? "Разбор не удался за отведённое число попыток.";
-    await services.registry.patchStream(vodId, { status: "skipped", reason });
-    known.set(vodId, { ...record, status: "skipped", reason });
+    await services.registry.patchStream(vodId, { status: "skipped", reason: EXHAUSTED_REASON });
+    known.set(vodId, { ...record, status: "skipped", reason: EXHAUSTED_REASON });
   }
 }
 
@@ -120,11 +128,21 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
       }
     }
 
+    // Имена документам, разобранным до их появления (FR-022). Стоит после
+    // отбора: работа разовая и не должна задерживать поиск новых записей.
+    await nameDocumentsWithoutNames(known.values(), services);
+
     await services.registry.recordCheck({ at: nowUnix });
   } catch (error) {
     // Отсутствие новых записей — не ошибка; сбой опроса — тоже не повод
     // останавливать всё остальное, но должен быть виден на странице.
+    // Причина при этом остаётся в журнале: отметка о проверке читается
+    // публичным токеном, и текст ошибки увидел бы любой посетитель.
     const message = error instanceof Error ? error.message : String(error);
-    await services.registry.recordCheck({ at: Math.floor(Date.now() / 1000), error: message });
+    console.error(`[опрос] ${message}`);
+    await services.registry.recordCheck({
+      at: Math.floor(Date.now() / 1000),
+      error: "Проверка новых записей не удалась. Следующая будет через час.",
+    });
   }
 }

@@ -4,6 +4,12 @@
  * Список трансляций не тратит вызовы Worker: страница читает Upstash Redis
  * напрямую. Токен разрешает только чтение — документация хранилища прямо
  * допускает его раскрытие в веб-клиентах.
+ *
+ * Здесь голый REST, а не клиент хранилища, и это важная разница: `HGETALL`
+ * отвечает плоским списком «поле, значение, поле, значение», и все значения
+ * приходят строками как есть. Разбор значений, похожих на JSON (числа,
+ * `true`, `null`) — это поведение клиента, а он остаётся на стороне Worker.
+ * Поэтому числа здесь приводятся через `Number`, а поля читаются по одному.
  */
 
 const REGISTRY_URL = process.env.BUN_PUBLIC_REGISTRY_URL ?? "";
@@ -18,7 +24,10 @@ export interface Chapter {
 export interface StreamSummary {
   vodId: string;
   status: "processing" | "ready" | "skipped" | "failed";
+  /** Заголовок с площадки: служебное поле, показывается только у неразобранного. */
   title: string;
+  /** Имя документа, выработанное по содержанию эфира (FR-025). */
+  docTitle?: string;
   url: string;
   publishedAt: string;
   durationSeconds: number;
@@ -32,6 +41,8 @@ export interface ChannelSummary {
   displayName: string;
   lastCheckedAt?: number;
   lastCheckError?: string;
+  /** Сведения о стримере: заполняет владелец, уходят в системную инструкцию. */
+  streamerInfo?: string;
 }
 
 class RegistryUnavailableError extends Error {}
@@ -68,6 +79,11 @@ async function redisPipeline<T>(commands: readonly (readonly unknown[])[]): Prom
     throw new RegistryUnavailableError(`Реестр ответил ${response.status}.`);
   }
   const body = (await response.json()) as Array<{ result: T; error?: string }>;
+  // Ошибка приходит на каждую команду отдельно, а не на весь запрос: без этой
+  // проверки сбойная команда давала бы на своём месте пустоту, и запись молча
+  // пропадала бы из списка — вместо отказа, который видно.
+  const failed = body.find((entry) => entry.error !== undefined);
+  if (failed !== undefined) throw new RegistryUnavailableError(failed.error ?? "");
   return body.map((entry) => entry.result);
 }
 
@@ -82,13 +98,25 @@ function toChapters(value: unknown): Chapter[] {
   }
 }
 
-function toSummary(fields: string[]): StreamSummary | undefined {
+/**
+ * Плоский ответ `HGETALL` в пары «поле — значение».
+ *
+ * Вынесено отдельно, потому что так читается и запись трансляции, и запись
+ * канала, и формат этот — часть контракта хранилища, а не мелочь: ответ
+ * приходит списком, где поле и значение чередуются.
+ */
+export function fieldsToMap(fields: readonly string[]): Map<string, string> {
   const map = new Map<string, string>();
   for (let index = 0; index < fields.length; index += 2) {
     const key = fields[index];
     const value = fields[index + 1];
     if (key !== undefined && value !== undefined) map.set(key, value);
   }
+  return map;
+}
+
+export function toSummary(fields: string[]): StreamSummary | undefined {
+  const map = fieldsToMap(fields);
   const vodId = map.get("vodId");
   if (vodId === undefined) return undefined;
 
@@ -99,6 +127,7 @@ function toSummary(fields: string[]): StreamSummary | undefined {
       ? status
       : "failed",
     title: map.get("title") ?? "",
+    ...(map.get("docTitle") === undefined || map.get("docTitle") === "" ? {} : { docTitle: map.get("docTitle") }),
     url: map.get("url") ?? "",
     publishedAt: map.get("publishedAt") ?? "",
     durationSeconds: Number(map.get("durationSeconds") ?? 0),
@@ -121,12 +150,7 @@ export async function listStreams(): Promise<StreamSummary[]> {
 export async function getChannel(): Promise<ChannelSummary | undefined> {
   const fields = await redisCall<string[]>(["HGETALL", "channel"]);
   if (fields.length === 0) return undefined;
-  const map = new Map<string, string>();
-  for (let index = 0; index < fields.length; index += 2) {
-    const key = fields[index];
-    const value = fields[index + 1];
-    if (key !== undefined && value !== undefined) map.set(key, value);
-  }
+  const map = fieldsToMap(fields);
   const login = map.get("login");
   if (login === undefined || login === "") return undefined;
   return {
@@ -136,5 +160,6 @@ export async function getChannel(): Promise<ChannelSummary | undefined> {
     ...(map.get("lastCheckError") === undefined || map.get("lastCheckError") === ""
       ? {}
       : { lastCheckError: map.get("lastCheckError") }),
+    ...(map.get("streamerInfo") === undefined ? {} : { streamerInfo: map.get("streamerInfo") }),
   };
 }
