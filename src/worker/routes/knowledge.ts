@@ -187,7 +187,16 @@ function toIso(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toISOString();
 }
 
-function dateToUnix(date: string, edge: string): number {
+/**
+ * Граница периода из даты вида ГГГГ-ММ-ДД.
+ *
+ * Одной проверкой на оба входа — и на запрос поиска, и на перечень трансляций
+ * для ассистента. Образец `DATE_PATTERN` пропускает и несуществующие даты
+ * вроде 2026-13-45: `Date.parse` на них возвращает не число, а `NaN`, и без
+ * этой проверки `NaN` ушёл бы в запрос к хранилищу границей диапазона —
+ * отказом хранилища вместо понятного «неверная дата».
+ */
+export function dateToUnix(date: string, edge: string): number {
   const parsed = Date.parse(`${date}T00:00:00Z`);
   if (Number.isNaN(parsed)) {
     throw new AppError("invalid_input", `Неверная дата ${edge} диапазона: ожидается ГГГГ-ММ-ДД.`);

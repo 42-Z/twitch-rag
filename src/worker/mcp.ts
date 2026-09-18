@@ -19,6 +19,7 @@ import { createServices } from "./env.ts";
 import { formatClock } from "../shared/time.ts";
 import { documentName } from "../shared/document-name.ts";
 import {
+  dateToUnix,
   knowledgeStats,
   parseSearchRequest,
   searchKnowledge,
@@ -111,10 +112,14 @@ export function createMcpServer(env: Env): McpServer {
     },
     async (input) => {
       // Данные берутся из реестра: векторный поиск здесь ни при чём.
+      // Границы считаются той же проверкой, что и в поиске: образец даты
+      // пропускает несуществующие числа, и без неё в запрос ушёл бы NaN.
+      const fromUnix = input.from === undefined ? undefined : dateToUnix(input.from, "начала");
+      const toUnix = input.to === undefined ? undefined : dateToUnix(input.to, "конца") + 86399;
       const streams = await services.registry.listStreams({
         limit: input.limit ?? 20,
-        ...(input.from === undefined ? {} : { fromUnix: Math.floor(Date.parse(`${input.from}T00:00:00Z`) / 1000) }),
-        ...(input.to === undefined ? {} : { toUnix: Math.floor(Date.parse(`${input.to}T23:59:59Z`) / 1000) }),
+        ...(fromUnix === undefined ? {} : { fromUnix }),
+        ...(toUnix === undefined ? {} : { toUnix }),
       });
       const ready = streams.filter((stream) => stream.status === "ready");
 
