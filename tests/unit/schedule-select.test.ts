@@ -155,8 +155,38 @@ describe("исчерпавшие попытки", () => {
     await retireExhausted(known, services);
 
     expect(patched[0]?.patch["status"]).toBe("skipped");
-    expect(patched[0]?.patch["reason"]).toBe("сервис недоступен");
     expect(known.get("1")?.status).toBe("skipped");
+  });
+
+  test("прежняя причина не переносится в пропуск — она обещала повтор", async () => {
+    // Пока запись в отказе, её берут заново, и причина об этом и говорит.
+    // После перевода в пропущенные это уже неправда: автоматика к такой
+    // записи не вернётся, и оставленная причина обманывала бы владельца.
+    const patched: Record<string, unknown>[] = [];
+    const known = new Map<string, StreamRecord>([
+      [
+        "1",
+        record({
+          vodId: "1",
+          status: "failed",
+          attempts: MAX_ATTEMPTS,
+          reason: "Разбор не удался. Запись попробуют разобрать заново.",
+        }),
+      ],
+    ]);
+    const services = {
+      registry: {
+        patchStream: async (_vodId: string, patch: Record<string, unknown>) => {
+          patched.push(patch);
+        },
+      },
+    } as unknown as Parameters<typeof retireExhausted>[1];
+
+    await retireExhausted(known, services);
+
+    const reason = String(patched[0]?.["reason"]);
+    expect(reason).not.toContain("Запись попробуют разобрать заново");
+    expect(reason).toContain("вручную");
   });
 
   test("недоисчерпанные и уже готовые не трогаются", async () => {

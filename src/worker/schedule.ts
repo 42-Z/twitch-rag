@@ -68,13 +68,20 @@ const ARCHIVE_MAX_PAGES = 5;
  * модель данных. Без перехода запись навсегда оставалась «неудачной»: в
  * списке владельца она висела как недоделанная, а в сводке знаний не
  * считалась ни разобранной, ни пропущенной.
+ *
+ * Причина пишется своя, а не берётся из прежней. Прежняя говорит, что запись
+ * попробуют разобрать заново, и это правда ровно до этого перехода: дальше
+ * автоматика к пропущенной записи не возвращается, и оставленная причина
+ * обещала бы то, чего не будет. Что запись можно вернуть вручную — сказано
+ * затем, чтобы владелец не остался с пропуском без выхода.
  */
+const EXHAUSTED_REASON = "Разбор не удался за отведённое число попыток. Разобрать запись заново можно вручную.";
+
 export async function retireExhausted(known: Map<string, StreamRecord>, services: Services): Promise<void> {
   for (const [vodId, record] of known) {
     if (record.status !== "failed" || record.attempts < MAX_ATTEMPTS) continue;
-    const reason = record.reason ?? "Разбор не удался за отведённое число попыток.";
-    await services.registry.patchStream(vodId, { status: "skipped", reason });
-    known.set(vodId, { ...record, status: "skipped", reason });
+    await services.registry.patchStream(vodId, { status: "skipped", reason: EXHAUSTED_REASON });
+    known.set(vodId, { ...record, status: "skipped", reason: EXHAUSTED_REASON });
   }
 }
 

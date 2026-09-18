@@ -11,9 +11,9 @@ import { useEffect, useState } from "react";
 import { formatDuration } from "@/shared/time.ts";
 import { documentName } from "@/shared/document-name.ts";
 import { Badge } from "@/components/ui/badge.tsx";
-import { Button } from "@/components/ui/button.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
+import { StreamActions } from "./StreamActions.tsx";
 import { listStreams, type StreamSummary } from "../lib/registry.ts";
 
 function formatDate(iso: string): string {
@@ -31,30 +31,36 @@ interface StreamListProps {
 
 export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: StreamListProps): React.JSX.Element {
   const [streams, setStreams] = useState<StreamSummary[] | undefined>(undefined);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const [deletingId, setDeletingId] = useState<string | undefined>(undefined);
-  const [reparsingId, setReparsingId] = useState<string | undefined>(undefined);
+  /** Сбой загрузки списка: показывать нечего, поэтому им и ограничивается весь экран. */
+  const [loadError, setLoadError] = useState<string | undefined>(undefined);
+  /**
+   * Сбой действия. Держится отдельно от сбоя загрузки: действие относится к
+   * одной записи, и убирать из-за него весь список нельзя — владелец терял бы
+   * его целиком из-за отказа, скажем, повторного разбора, который идёт прямо
+   * сейчас и отвергнут по правилу FR-030.
+   */
+  const [rowError, setRowError] = useState<{ vodId: string; text: string } | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
-    setError(undefined);
+    setLoadError(undefined);
     listStreams()
       .then((result) => {
         if (!cancelled) setStreams(result);
       })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : String(loadError));
+      .catch((error: unknown) => {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error));
       });
     return () => {
       cancelled = true;
     };
   }, [refreshToken]);
 
-  if (error !== undefined) {
+  if (loadError !== undefined) {
     return (
       <Alert variant="destructive">
         <AlertTitle>Реестр недоступен</AlertTitle>
-        <AlertDescription>{error}</AlertDescription>
+        <AlertDescription>{loadError}</AlertDescription>
       </Alert>
     );
   }
@@ -79,6 +85,37 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
     );
   }
 
+  function failed(vodId: string): React.JSX.Element | null {
+    if (rowError === undefined || rowError.vodId !== vodId) return null;
+    return <p className="text-sm text-destructive">{rowError.text}</p>;
+  }
+
+  function actions(stream: StreamSummary): React.JSX.Element {
+    return (
+      <StreamActions
+        stream={stream}
+        onOpen={onOpen}
+        {...(onReparse === undefined ? {} : { onReparse })}
+        {...(onDelete === undefined ? {} : { onDelete })}
+        onFailed={(vodId, text) => setRowError({ vodId, text })}
+        onDone={(vodId, outcome) => {
+          setRowError(undefined);
+          setStreams((current) =>
+            current === undefined
+              ? current
+              : outcome === "deleted"
+                ? current.filter((item) => item.vodId !== vodId)
+                : // Разбор принят: запись уходит в «В обработке» до следующего
+                  // перечитывания списка.
+                  current.map((item) =>
+                    item.vodId === vodId ? { ...item, status: "processing" as const } : item,
+                  ),
+          );
+        }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <section>
@@ -100,60 +137,15 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
                     {stream.sectionCount}
                   </p>
                 </div>
-                <div className="flex shrink-0 gap-2">
-                  <Button size="sm" variant="secondary" onClick={() => onOpen(stream.vodId)}>
-                    Открыть документ
-                  </Button>
-                  {onReparse !== undefined && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={reparsingId === stream.vodId}
-                      onClick={() => {
-                        // Предупреждение обязательно: повтор стоит столько же,
-                        // сколько первый разбор, и владелец должен знать это до
-                        // нажатия, а не после (FR-035).
-                        const confirmed = window.confirm(
-                          `Разобрать «${documentName(stream)}» заново?\n\n` +
-                            "Запись будет скачана и распознана повторно — это стоит столько же, " +
-                            "сколько первый разбор. Прежний документ и знания заменятся новыми.",
-                        );
-                        if (!confirmed) return;
-                        setReparsingId(stream.vodId);
-                        onReparse(stream.vodId)
-                          .then(() => setStreams((current) => current?.map((item) =>
-                            item.vodId === stream.vodId ? { ...item, status: "processing" as const } : item,
-                          )))
-                          .catch((reparseError: unknown) =>
-                            setError(reparseError instanceof Error ? reparseError.message : String(reparseError)),
-                          )
-                          .finally(() => setReparsingId(undefined));
-                      }}
-                    >
-                      {reparsingId === stream.vodId ? "Запускаю…" : "Разобрать заново"}
-                    </Button>
-                  )}
-                  {onDelete !== undefined && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={deletingId === stream.vodId}
-                      onClick={() => {
-                        if (!window.confirm(`Удалить «${documentName(stream)}» из базы знаний?`)) return;
-                        setDeletingId(stream.vodId);
-                        onDelete(stream.vodId)
-                          .then(() => setStreams((current) => current?.filter((item) => item.vodId !== stream.vodId)))
-                          .catch((deleteError: unknown) =>
-                            setError(deleteError instanceof Error ? deleteError.message : String(deleteError)),
-                          )
-                          .finally(() => setDeletingId(undefined));
-                      }}
-                    >
-                      {deletingId === stream.vodId ? "Удаление…" : "Удалить"}
-                    </Button>
-                  )}
-                </div>
+                {actions(stream)}
               </div>
+              {/* У разобранной записи причина — не отказ, а изъян разбора:
+                  столько-то эфира не попало ни в один раздел. Показать её
+                  больше негде, и без этой строки владелец читал бы документ
+                  как полный, не зная, что часть эфира в базе отсутствует. */}
+              {stream.reason !== undefined && stream.reason !== "" && (
+                <p className="text-sm text-amber-600">{stream.reason}</p>
+              )}
               {stream.categories.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {[...new Set(stream.categories.map((chapter) => chapter.title))]
@@ -165,6 +157,7 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
                     ))}
                 </div>
               )}
+              {failed(stream.vodId)}
             </li>
           ))}
         </ul>
@@ -177,13 +170,21 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
           </h3>
           <ul className="divide-y">
             {inProgress.map((stream) => (
-              <li key={stream.vodId} className="space-y-0.5 py-4 first:pt-0">
-                {/* Имя документа у перебираемой записи уже есть с прошлого
-                    разбора — показывается оно, а не заголовок с площадки. */}
-                <p className="font-medium">{documentName(stream) || stream.vodId}</p>
-                <p className="text-sm text-muted-foreground">
-                  {stream.status === "processing" ? "разбирается…" : `не удалось разобрать: ${stream.reason ?? ""}`}
-                </p>
+              <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    {/* Имя документа у перебираемой записи уже есть с прошлого
+                        разбора — показывается оно, а не заголовок с площадки. */}
+                    <p className="font-medium">{documentName(stream) || stream.vodId}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {stream.status === "processing"
+                        ? "разбирается…"
+                        : `не удалось разобрать: ${stream.reason ?? ""}`}
+                    </p>
+                  </div>
+                  {actions(stream)}
+                </div>
+                {failed(stream.vodId)}
               </li>
             ))}
           </ul>
@@ -197,9 +198,15 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
           </h3>
           <ul className="divide-y">
             {skipped.map((stream) => (
-              <li key={stream.vodId} className="space-y-0.5 py-4 first:pt-0">
-                <p className="font-medium text-muted-foreground">{documentName(stream) || stream.vodId}</p>
-                <p className="text-sm text-muted-foreground">{stream.reason ?? "причина не указана"}</p>
+              <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="font-medium text-muted-foreground">{documentName(stream) || stream.vodId}</p>
+                    <p className="text-sm text-muted-foreground">{stream.reason ?? "причина не указана"}</p>
+                  </div>
+                  {actions(stream)}
+                </div>
+                {failed(stream.vodId)}
               </li>
             ))}
           </ul>

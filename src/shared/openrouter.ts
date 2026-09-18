@@ -347,13 +347,14 @@ export function parseComposedSections(raw: string): ComposedSection[] {
   for (const section of parsed.data.sections) {
     const title = section.title.trim();
     const text = section.text.trim();
-    if (title === "" || text === "" || section.endSeconds <= section.startSeconds) continue;
-    sections.push({
-      title,
-      text,
-      startSeconds: Math.max(0, section.startSeconds),
-      endSeconds: section.endSeconds,
-    });
+    // Обрезка идёт до проверки, а не после: схема допускает любое целое, и
+    // раздел с отрицательным концом проходил проверку по исходным значениям,
+    // а после обрезки начала нулём получался раздел, у которого начало
+    // больше конца, — ровно то, что проверка и запрещает.
+    const startSeconds = Math.max(0, section.startSeconds);
+    const endSeconds = Math.max(0, section.endSeconds);
+    if (title === "" || text === "" || endSeconds <= startSeconds) continue;
+    sections.push({ title, text, startSeconds, endSeconds });
   }
 
   return sections;
