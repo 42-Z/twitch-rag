@@ -147,18 +147,27 @@ interface Variant {
   users: string[];
 }
 
+/**
+ * Сведения о стримере для варианта A. Пусто — разбор идёт без них; заполнено —
+ * ровно так, как их получит боевой разбор от владельца канала. Мерит не
+ * инструкцию, а то, пользуется ли модель этими сведениями вообще.
+ */
+const streamerInfo = arg("streamer-info", "");
+
+const partMessages = (): string[] => [
+  buildTranscriptMessage({
+    publishedAt: report.publishedAt,
+    categories: report.chapters,
+    fullTranscript: transcript,
+  }),
+  buildPartMessage({ startSeconds: report.section.from, endSeconds: partEnd }),
+];
+
 const variants: Variant[] = [
   {
-    name: "A-сегодня",
-    system: buildDocumentSystemPrompt(),
-    users: [
-      buildTranscriptMessage({
-        publishedAt: report.publishedAt,
-        categories: report.chapters,
-        fullTranscript: transcript,
-      }),
-      buildPartMessage({ startSeconds: report.section.from, endSeconds: partEnd }),
-    ],
+    name: streamerInfo === "" ? "A-сегодня" : "A-со-сведениями",
+    system: buildDocumentSystemPrompt({ streamerInfo }),
+    users: partMessages(),
   },
   { name: "B-без-потерь", system: CANDIDATE_SYSTEM_PROMPT, users: [candidateUserPrompt()] },
   { name: "C-с-объёмом", system: `${CANDIDATE_SYSTEM_PROMPT}\n${VOLUME_RULE}`, users: [candidateUserPrompt()] },

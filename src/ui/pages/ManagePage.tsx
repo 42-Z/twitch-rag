@@ -15,9 +15,12 @@ import { Badge } from "@/components/ui/badge.tsx";
 import { callOwnerApi, TOKEN_HINT, type TokenState } from "../lib/owner.ts";
 import type { ChannelSummary } from "../lib/registry.ts";
 
-/** Пример заполнения: показывает, чего от поля ждут, лучше любого пояснения. */
+/**
+ * Пример заполнения: показывает, чего от поля ждут, лучше любого пояснения.
+ * Взят из настоящего описания канала, а не выдуман.
+ */
 const STREAMER_INFO_EXAMPLE =
-  "5opka — Михаил, стримит истории из жизни и разборки с чатом. Постоянные собеседники: Соня, Влад, Мафаня.";
+  "5opka — Кирилл Баранов, стримит истории из жизни и разборки с чатом, играет в Minecraft. Постоянные собеседники: Соня (sonasheka), Мафаня (mafanyaking), Buster, MellSher. Главный мем канала — «42, братуха».";
 
 interface ManagePageProps {
   adminToken: string;
