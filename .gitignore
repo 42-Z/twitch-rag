@@ -6,6 +6,9 @@ out
 dist
 *.tgz
 
+# собранная программа конвейера: кладётся в машину Upstash, в репозитории не нужна
+pipeline.mjs
+
 # code coverage
 coverage
 *.lcov
