@@ -48,6 +48,16 @@ const transcriptFullKey = (vodId: string): string => `transcript/${vodId}/full.t
 /** Временное при разборе: удаляется вместе с аудио, каким бы ни был исход. */
 const TEMPORARY_PREFIXES = ["audio/", "transcript/"] as const;
 
+/**
+ * Что владелец видит вместо причины отказа.
+ *
+ * Фраза стоит здесь, а не собирается из случившегося, потому что причина
+ * сбоя наружу не идёт вовсе: она остаётся в журнале. Пока запись в отказе,
+ * её берут заново — а когда попытки исчерпаются, причину заменит запись о
+ * пропуске (schedule.ts).
+ */
+const FAILURE_REASON = "Разбор не удался. Запись попробуют разобрать заново.";
+
 export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> {
   override async run(event: Readonly<WorkflowEvent<IngestParams>>, step: WorkflowStep): Promise<void> {
     const params = event.payload;
@@ -61,10 +71,17 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       // разбиты по кускам. Забытое подчищает почасовая уборка по возрасту
       // (`cleanupStaleAudio` в index.ts).
       const message = error instanceof Error ? error.message : String(error);
+      // Причина сбоя уходит в журнал и только туда: в реестр она не пишется,
+      // а реестр читается публичным токеном — текст ошибки увидел бы любой
+      // посетитель страницы.
+      console.error(`[разбор ${params.vodId}] ${message}`);
       if (!isEngineReset(message) && !(await isAlreadyFinished(params.vodId, services))) {
         // Запись не должна остаться в processing навсегда — её возьмут заново
         // на следующем опросе (schedule.ts проверяет attempts).
-        await services.registry.patchStream(params.vodId, { status: "failed", reason: message });
+        await services.registry.patchStream(params.vodId, {
+          status: "failed",
+          reason: FAILURE_REASON,
+        });
       }
       throw error;
     }

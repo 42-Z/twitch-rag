@@ -132,10 +132,13 @@ export async function startStreamIngest(
     // Бокс не принял работу — разбора не будет, и держать запись в
     // `processing` нельзя: сутки она выглядела бы разбираемой, и ни
     // владелец, ни расписание не могли бы её тронуть.
+    // Причина — в журнал, а не в реестр: реестр читается публичным токеном,
+    // и текст ошибки увидел бы любой посетитель страницы.
     const message = error instanceof Error ? error.message : String(error);
+    console.error(`[разбор ${vodId}] запуск не удался: ${message}`);
     await services.registry.patchStream(vodId, {
       status: "failed",
-      reason: `Разбор не запустился: ${message}`,
+      reason: "Разбор не запустился. Запись попробуют разобрать заново.",
       processedAt: Math.floor(Date.now() / 1000),
     });
     throw error;

@@ -42,6 +42,23 @@ function isFailure(body: unknown): body is IngestFailedBody {
 const PERMANENT_FAILURES = new Set(["subscriber_only", "not_found", "geo_blocked"]);
 
 /**
+ * Что владелец видит вместо сообщения бокса.
+ *
+ * Текст берётся свой, а не присланный: бокс — сторона, которой мы не
+ * распоряжаемся, а причина ложится в реестр, который читается публичным
+ * токеном. Незнакомый код тоже получает свою фразу, а не пришедшую строку.
+ */
+const FAILURE_REASONS: Record<string, string> = {
+  subscriber_only: "Запись доступна только подписчикам канала.",
+  not_found: "Запись удалена или недоступна.",
+  geo_blocked: "Запись недоступна из этого региона.",
+  download_failed: "Запись не удалось скачать. Попробуем ещё раз.",
+};
+
+/** Отказ, о котором ничего не известно, — считается временным и повторяется. */
+const UNKNOWN_FAILURE_REASON = "Запись не удалось подготовить. Попробуем ещё раз.";
+
+/**
  * Инстанс Workflow называется по записи и прогону: `create` с занятым именем
  * бросает ошибку, и это ровно нужный признак повтора. Реестр для дедупликации
  * не годится — запись уже стоит в `processing` с того момента, как разбор
@@ -86,9 +103,12 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
     // считается временным — ошибиться в сторону повтора дешевле.
     const permanent = PERMANENT_FAILURES.has(body.code);
     const status = permanent ? "skipped" : "failed";
+    // Присланное боксом сообщение остаётся в журнале: в реестр идёт своя
+    // фраза, потому что реестр читается публичным токеном.
+    console.error(`[разбор ${body.vodId}] отказ бокса ${body.code}: ${body.message}`);
     await services.registry.patchStream(body.vodId, {
       status,
-      reason: body.message,
+      reason: FAILURE_REASONS[body.code] ?? UNKNOWN_FAILURE_REASON,
       processedAt: nowUnix(),
     });
     return Response.json({ vodId: body.vodId, status });

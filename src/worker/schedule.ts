@@ -124,7 +124,13 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
   } catch (error) {
     // Отсутствие новых записей — не ошибка; сбой опроса — тоже не повод
     // останавливать всё остальное, но должен быть виден на странице.
+    // Причина при этом остаётся в журнале: отметка о проверке читается
+    // публичным токеном, и текст ошибки увидел бы любой посетитель.
     const message = error instanceof Error ? error.message : String(error);
-    await services.registry.recordCheck({ at: Math.floor(Date.now() / 1000), error: message });
+    console.error(`[опрос] ${message}`);
+    await services.registry.recordCheck({
+      at: Math.floor(Date.now() / 1000),
+      error: "Проверка новых записей не удалась. Следующая будет через час.",
+    });
   }
 }

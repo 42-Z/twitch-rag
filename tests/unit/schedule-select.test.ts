@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { selectNextVideo, retireExhausted } from "../../src/worker/schedule.ts";
+import { selectNextVideo, retireExhausted, runScheduledCheck } from "../../src/worker/schedule.ts";
 import { MAX_ATTEMPTS, type StreamRecord } from "../../src/shared/registry.ts";
 import type { TwitchVideo } from "../../src/shared/twitch.ts";
 
@@ -177,5 +177,40 @@ describe("исчерпавшие попытки", () => {
 
     expect(patched).toHaveLength(0);
     expect(known.get("1")?.status).toBe("failed");
+  });
+});
+
+describe("сбой опроса", () => {
+  /** Отметка о проверке читается публичным токеном — туда идёт своя фраза. */
+  test("причина сбоя в реестр не пишется", async () => {
+    const checks: Array<Record<string, unknown>> = [];
+    const services = {
+      registry: {
+        getChannel: async () => ({
+          twitchUserId: "1",
+          login: "channel",
+          displayName: "Канал",
+          watchFrom: 0,
+          addedAt: 0,
+        }),
+        knownVodIds: async () => [],
+        getStream: async () => undefined,
+        recordCheck: async (mark: Record<string, unknown>) => {
+          checks.push(mark);
+        },
+      },
+      twitch: {
+        listArchive: async () => {
+          throw new Error("Twitch ответил 503: service unavailable");
+        },
+        getLiveStreamId: async () => undefined,
+      },
+    } as unknown as Parameters<typeof runScheduledCheck>[0];
+
+    await runScheduledCheck(services, "https://example.workers.dev");
+
+    const error = String(checks[0]?.["error"] ?? "");
+    expect(error).not.toContain("503");
+    expect(error).toBe("Проверка новых записей не удалась. Следующая будет через час.");
   });
 });

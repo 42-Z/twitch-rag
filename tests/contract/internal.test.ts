@@ -185,6 +185,40 @@ describe("POST /api/internal/ingest-ready", () => {
     expect(captured.patched[0]?.patch["status"]).toBe("failed");
   });
 
+  test("сообщение бокса в реестр не попадает — там своя фраза", async () => {
+    // Реестр читается публичным токеном, то есть любую строку из него видит
+    // любой посетитель страницы. Текст от бокса — сторона, которой мы не
+    // распоряжаемся, — туда не пускается: владельцу достаётся своя фраза,
+    // а присланное остаётся в журнале.
+    const captured: Captured = { patched: [], put: [] };
+    await handleIngestReady(
+      request({
+        vodId: "2873255697",
+        failed: true,
+        code: "download_failed",
+        message: "yt-dlp: ERROR: unable to download video data: HTTP Error 403",
+      }),
+      fakeEnv(),
+      fakeServices(captured),
+    );
+
+    const reason = String(captured.patched[0]?.patch["reason"]);
+    expect(reason).not.toContain("yt-dlp");
+    expect(reason).not.toContain("403");
+    expect(reason).toBe("Запись не удалось скачать. Попробуем ещё раз.");
+  });
+
+  test("незнакомый код отказа тоже получает свою фразу", async () => {
+    const captured: Captured = { patched: [], put: [] };
+    await handleIngestReady(
+      request({ vodId: "2873255697", failed: true, code: "что-то новое", message: "стек: at Object.<anonymous>" }),
+      fakeEnv(),
+      fakeServices(captured),
+    );
+
+    expect(String(captured.patched[0]?.patch["reason"])).not.toContain("Object.<anonymous>");
+  });
+
   test("сигнал бокса не начисляет вторую попытку", async () => {
     // Попытку зачёл запуск разбора; сигнал — это тот же заход.
     const captured: Captured = { patched: [], put: [] };
