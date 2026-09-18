@@ -22,6 +22,10 @@ function fakeEnv(options: { existingInstanceIds?: Set<string>; failCreate?: Erro
         created.add(id);
         return { id };
       },
+      get: async (id: string) => {
+        if (!created.has(id)) throw new Error(`Instance ${id} not found.`);
+        return { id };
+      },
     },
   } as unknown as Env;
 }
@@ -206,6 +210,42 @@ describe("POST /api/internal/ingest-ready", () => {
     expect(reason).not.toContain("yt-dlp");
     expect(reason).not.toContain("403");
     expect(reason).toBe("Запись не удалось скачать. Попробуем ещё раз.");
+  });
+
+  test("запоздавший отказ не помечает запись отказавшей", async () => {
+    // Тот же заход уже начал разбор, а ответ на сигнал готовности до бокса не
+    // дошёл — и следом пришёл отказ. Пометив запись отказавшей, мы отправили бы
+    // её под автоматический повтор, и разбор пошёл бы второй раз (FR-029).
+    const captured: Captured = { patched: [], put: [] };
+    const runId = "7ba0d62c-a003-444b-8d92-b860ec1aa46c";
+
+    const response = await handleIngestReady(
+      request({ vodId: "2873255697", failed: true, runId, code: "download_failed", message: "не удалось скачать" }),
+      fakeEnv({ existingInstanceIds: new Set([`ingest-2873255697-${runId}`]) }),
+      fakeServices(captured),
+    );
+
+    const data = (await response.json()) as { status: string };
+    expect(data.status).toBe("processing");
+    expect(captured.patched).toHaveLength(0);
+  });
+
+  test("отказ захода, который не начинался, применяется как прежде", async () => {
+    const captured: Captured = { patched: [], put: [] };
+
+    await handleIngestReady(
+      request({
+        vodId: "2873255697",
+        failed: true,
+        runId: "7ba0d62c-a003-444b-8d92-b860ec1aa46c",
+        code: "download_failed",
+        message: "не удалось скачать",
+      }),
+      fakeEnv(),
+      fakeServices(captured),
+    );
+
+    expect(captured.patched[0]?.patch["status"]).toBe("failed");
   });
 
   test("незнакомый код отказа тоже получает свою фразу", async () => {
