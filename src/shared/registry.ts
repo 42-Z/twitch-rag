@@ -6,7 +6,10 @@
  * что нельзя показать посетителю страницы.
  */
 
-import { Redis } from "@upstash/redis";
+// Вход, предназначенный для Workers: обычный берёт окружение и сеть так, как
+// это делается в Node, а площадка и то и другое подаёт иначе. Документация
+// прямо велит брать подходящий вход при развёртывании на особых площадках.
+import { Redis } from "@upstash/redis/cloudflare";
 import type { Chapter } from "./categories.ts";
 import { upstreamError } from "./errors.ts";
 
@@ -204,10 +207,19 @@ export class Registry {
     });
   }
 
-  /** Идентификаторы всех известных записей — основа проверки «эту уже брали». */
+  /**
+   * Идентификаторы всех известных записей — основа проверки «эту уже брали».
+   *
+   * Приведение к строке здесь не для красоты. Ответ разбирается как JSON, и
+   * участник множества, состоящий из цифр, возвращается числом — проверено на
+   * самом SDK с подменённой сетью: на запрос обхода вернулось `2345678901`
+   * числом. Идентификаторы площадки приходят строками, поэтому без приведения
+   * проверка «эту запись уже брали» не срабатывала бы никогда, и обход архива
+   * каждый раз шёл бы до конца вместо остановки на первой известной записи.
+   */
   async knownVodIds(): Promise<string[]> {
-    const ids = await this.call(() => this.redis.zrange<string[]>(INDEX_KEY, 0, -1));
-    return ids;
+    const ids = await this.call(() => this.redis.zrange<unknown[]>(INDEX_KEY, 0, -1));
+    return ids.map((id) => String(id));
   }
 
   async listStreams(options: { limit?: number; fromUnix?: number; toUnix?: number } = {}): Promise<StreamRecord[]> {

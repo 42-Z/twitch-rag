@@ -79,6 +79,11 @@ async function redisPipeline<T>(commands: readonly (readonly unknown[])[]): Prom
     throw new RegistryUnavailableError(`Реестр ответил ${response.status}.`);
   }
   const body = (await response.json()) as Array<{ result: T; error?: string }>;
+  // Ошибка приходит на каждую команду отдельно, а не на весь запрос: без этой
+  // проверки сбойная команда давала бы на своём месте пустоту, и запись молча
+  // пропадала бы из списка — вместо отказа, который видно.
+  const failed = body.find((entry) => entry.error !== undefined);
+  if (failed !== undefined) throw new RegistryUnavailableError(failed.error ?? "");
   return body.map((entry) => entry.result);
 }
 
