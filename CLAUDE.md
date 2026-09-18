@@ -144,6 +144,8 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 
 Всегда сам делай коммиты
 
+Измнения делай в отдельной ветке с последующим Pull Request
+
 ## Работа по SpecKit
 
 - Любые действия только в соответствии с GitHub SpecKit
