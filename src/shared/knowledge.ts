@@ -161,7 +161,10 @@ export class Knowledge {
    */
   async removeExcept(vodId: string, keep: ReadonlySet<string>): Promise<number> {
     const stale: string[] = [];
-    let cursor: number | string = 0;
+    // Курсор — строка, и первый запрос идёт с "0": так это описано в
+    // справочнике по точке `range`. Пустая строка в ответе означает, что
+    // страниц больше нет, — по ней и заканчивается обход.
+    let cursor = "0";
     try {
       do {
         // Тип страницы выписан явно: курсор и страница ссылаются друг на
@@ -176,6 +179,8 @@ export class Knowledge {
         }
         cursor = page.nextCursor;
       } while (cursor !== "");
+      // Удаление — после обхода целиком: удалять по ходу значило бы сдвигать
+      // страницы под собой и пропускать куски.
       if (stale.length > 0) await this.index.delete(stale);
     } catch (error) {
       throw upstreamError("векторная база", error);

@@ -4,6 +4,12 @@
  * Список трансляций не тратит вызовы Worker: страница читает Upstash Redis
  * напрямую. Токен разрешает только чтение — документация хранилища прямо
  * допускает его раскрытие в веб-клиентах.
+ *
+ * Здесь голый REST, а не клиент хранилища, и это важная разница: `HGETALL`
+ * отвечает плоским списком «поле, значение, поле, значение», и все значения
+ * приходят строками как есть. Разбор значений, похожих на JSON (числа,
+ * `true`, `null`) — это поведение клиента, а он остаётся на стороне Worker.
+ * Поэтому числа здесь приводятся через `Number`, а поля читаются по одному.
  */
 
 const REGISTRY_URL = process.env.BUN_PUBLIC_REGISTRY_URL ?? "";
@@ -87,13 +93,25 @@ function toChapters(value: unknown): Chapter[] {
   }
 }
 
-function toSummary(fields: string[]): StreamSummary | undefined {
+/**
+ * Плоский ответ `HGETALL` в пары «поле — значение».
+ *
+ * Вынесено отдельно, потому что так читается и запись трансляции, и запись
+ * канала, и формат этот — часть контракта хранилища, а не мелочь: ответ
+ * приходит списком, где поле и значение чередуются.
+ */
+export function fieldsToMap(fields: readonly string[]): Map<string, string> {
   const map = new Map<string, string>();
   for (let index = 0; index < fields.length; index += 2) {
     const key = fields[index];
     const value = fields[index + 1];
     if (key !== undefined && value !== undefined) map.set(key, value);
   }
+  return map;
+}
+
+export function toSummary(fields: string[]): StreamSummary | undefined {
+  const map = fieldsToMap(fields);
   const vodId = map.get("vodId");
   if (vodId === undefined) return undefined;
 
@@ -127,12 +145,7 @@ export async function listStreams(): Promise<StreamSummary[]> {
 export async function getChannel(): Promise<ChannelSummary | undefined> {
   const fields = await redisCall<string[]>(["HGETALL", "channel"]);
   if (fields.length === 0) return undefined;
-  const map = new Map<string, string>();
-  for (let index = 0; index < fields.length; index += 2) {
-    const key = fields[index];
-    const value = fields[index + 1];
-    if (key !== undefined && value !== undefined) map.set(key, value);
-  }
+  const map = fieldsToMap(fields);
   const login = map.get("login");
   if (login === undefined || login === "") return undefined;
   return {

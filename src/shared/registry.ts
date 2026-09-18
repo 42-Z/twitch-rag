@@ -303,6 +303,12 @@ function asChapters(value: unknown): Chapter[] {
   }
 }
 
+/**
+ * Приведение к строке — не перестраховка. Клиент Upstash пробует каждое
+ * значение хеша разобрать как JSON и возвращает как есть, только если не
+ * разобралось: значит, записанное «42» вернётся числом, «null» — пустотой,
+ * `true` — булевым. Имя документа «42» без этого приведения пришло бы числом.
+ */
 function asString(value: unknown): string {
   return value === undefined || value === null ? "" : String(value);
 }
