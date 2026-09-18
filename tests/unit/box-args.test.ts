@@ -1,5 +1,8 @@
-import { test, expect, describe } from "bun:test";
-import { BoxRunner } from "../../src/shared/box.ts";
+import { test, expect, describe, afterAll } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BoxRunner, buildIngestCommand } from "../../src/shared/box.ts";
 import { AppError } from "../../src/shared/errors.ts";
 
 /**
@@ -53,5 +56,77 @@ describe("проверка аргументов запуска разбора", 
   test("пустые значения отвергаются", async () => {
     expect((await reject({ vodId: "" })).code).toBe("invalid_input");
     expect((await reject({ url: "" })).code).toBe("invalid_input");
+  });
+});
+
+/**
+ * Команда запуска прогона проверяется настоящей оболочкой на временном
+ * каталоге: бокса рядом нет, а ошибку в команде иначе видно только по тому,
+ * что разбор не начался, — и нигде не видно почему.
+ */
+describe("команда запуска прогона", () => {
+  const homes: string[] = [];
+
+  afterAll(() => {
+    for (const home of homes) rmSync(home, { recursive: true, force: true });
+  });
+
+  /** Каталог, изображающий рабочий каталог бокса. */
+  function boxHome(files: { pipeline?: boolean; env?: boolean } = {}): string {
+    const home = mkdtempSync(join(tmpdir(), "box-home-"));
+    homes.push(home);
+    if (files.pipeline !== false) writeFileSync(join(home, "pipeline.mjs"), "process.exit(0)\n");
+    if (files.env !== false) writeFileSync(join(home, ".env.pipeline"), "X=1\n");
+    return home;
+  }
+
+  function run(home: string): { code: number; stderr: string } {
+    const command = buildIngestCommand({
+      vodId: "2345678901",
+      url: "https://www.twitch.tv/videos/2345678901",
+      callbackUrl: "https://example.workers.dev/api/internal/ingest-ready",
+      attempt: "t1",
+      home,
+    });
+    // Оболочка та же, что у бокса, и без «bash» на конце: команда обязана быть
+    // обычным sh, иначе на боксе она может просто не разобраться.
+    const result = Bun.spawnSync(["sh", "-c", command]);
+    return { code: result.exitCode, stderr: result.stderr.toString() };
+  }
+
+  test("без файла прогона запуск отвергается, а не проходит молча", () => {
+    // Откреплённый запуск возвращает ноль всегда — даже когда команды не
+    // существует вовсе, — поэтому без проверки впереди пропажа файла
+    // оставалась бы незамеченной, а Worker ждал бы обратного вызова.
+    const result = run(boxHome({ pipeline: false }));
+
+    expect(result.code).toBe(3);
+    expect(result.stderr).toContain("нет файла прогона");
+  });
+
+  test("без файла секретов запуск отвергается", () => {
+    const result = run(boxHome({ env: false }));
+
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain("нет файла секретов");
+  });
+
+  test("когда оба файла на месте, запуск проходит", () => {
+    expect(run(boxHome()).code).toBe(0);
+  });
+
+  test("журнал захода и значения записи попадают в команду", () => {
+    const command = buildIngestCommand({
+      vodId: "2345678901",
+      url: "https://www.twitch.tv/videos/2345678901",
+      callbackUrl: "https://example.workers.dev/api/internal/ingest-ready",
+      attempt: "t1",
+      home: "/workspace/home",
+    });
+
+    expect(command).toContain("ingest-2345678901-t1.log");
+    expect(command).toContain("--vod '2345678901'");
+    expect(command).toContain("--url 'https://www.twitch.tv/videos/2345678901'");
+    expect(command).toContain("--callback 'https://example.workers.dev/api/internal/ingest-ready'");
   });
 });

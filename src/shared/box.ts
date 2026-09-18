@@ -16,18 +16,19 @@ export interface BoxConfig {
 }
 
 /**
- * Путь к собранному прогону внутри бокса. Расширение `.mjs`, а не `.js` —
- * сборка использует верхнеуровневый `await`, и без него Node решал бы модуль
- * как CommonJS в зависимости от `package.json` рабочего каталога бокса.
+ * Рабочий каталог бокса: в нём лежат собранный прогон, его секреты и журналы
+ * заходов.
+ *
+ * Прогон — `pipeline.mjs`, а не `.js`: сборка использует верхнеуровневый
+ * `await`, и без него Node решал бы модуль как CommonJS в зависимости от
+ * `package.json` рабочего каталога бокса.
+ *
+ * Секреты — файлом `.env.pipeline`, а не в командной строке: `box env set`
+ * держит только переменные, заданные при создании бокса, а прогон бокса уже
+ * существует. Команда `ps` внутри бокса иначе показала бы секрет любому, кто
+ * туда заглянет.
  */
-export const PIPELINE_PATH = "/workspace/home/pipeline.mjs";
-/**
- * Секреты прогона (`INGEST_SECRET`, ключи R2) — файлом, а не в командной
- * строке: `box env set` держит только переменные, заданные при создании
- * бокса, а прогон бокса уже существует. Команда `ps` внутри бокса иначе
- * показала бы секрет любому, кто туда заглянет.
- */
-export const PIPELINE_ENV_PATH = "/workspace/home/.env.pipeline";
+export const BOX_HOME = "/workspace/home";
 
 export class BoxRunner {
   constructor(private readonly config: BoxConfig) {}
@@ -47,12 +48,7 @@ export class BoxRunner {
     // пропали сведения о том, почему разбор пошёл двумя копиями.
     const attempt = Date.now().toString(36);
 
-    const command =
-      `( node --env-file=${PIPELINE_ENV_PATH} ${PIPELINE_PATH}` +
-      ` --vod '${vodId}'` +
-      ` --url '${url}'` +
-      ` --callback '${callbackUrl}'` +
-      ` > /workspace/home/ingest-${vodId}-${attempt}.log 2>&1 & )`;
+    const command = buildIngestCommand({ vodId, url, callbackUrl, attempt });
 
     await this.withRetries(async () => {
       const box = await Box.get(this.config.boxId, { apiKey: this.config.apiKey });
@@ -96,6 +92,39 @@ export class BoxRunner {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Команда запуска прогона в боксе.
+ *
+ * Вынесена отдельно от самого запуска, потому что её и надо проверять: на
+ * живом боксе ошибку в ней видно только по тому, что разбор не начался, а
+ * причина при этом никуда не попадает.
+ *
+ * Проверка стоит перед откреплённым запуском, а не после него. Подоболочка
+ * `( … & )` — документированный способ отцепить процесс — завершается сразу и
+ * всегда с нулём: `( нет-такой-команды & )` тоже даёт ноль. Поэтому о судьбе
+ * откреплённого запуска код возврата не говорит ничего, и «нет файла прогона»
+ * проходило бы молча, а Worker ждал бы обратного вызова, которого не будет.
+ */
+export function buildIngestCommand(input: {
+  vodId: string;
+  url: string;
+  callbackUrl: string;
+  attempt: string;
+  /** Рабочий каталог. Меняется только в проверке, где бокса нет. */
+  home?: string;
+}): string {
+  const home = input.home ?? BOX_HOME;
+  return (
+    `if [ ! -f ${home}/pipeline.mjs ]; then echo "нет файла прогона" >&2; exit 3; fi; ` +
+    `if [ ! -f ${home}/.env.pipeline ]; then echo "нет файла секретов" >&2; exit 4; fi; ` +
+    `( node --env-file=${home}/.env.pipeline ${home}/pipeline.mjs` +
+    ` --vod '${input.vodId}'` +
+    ` --url '${input.url}'` +
+    ` --callback '${input.callbackUrl}'` +
+    ` > ${home}/ingest-${input.vodId}-${input.attempt}.log 2>&1 & )`
+  );
 }
 
 /**
