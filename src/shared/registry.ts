@@ -150,6 +150,30 @@ export class Registry {
   }
 
   /**
+   * Занять запись под разбор — одной неразрывной операцией.
+   *
+   * Проверка «эта запись уже разбирается» и запись `processing` — два разных
+   * обращения к хранилищу, и между ними есть окно: два запуска по одной
+   * записи успевают прочитать её до того, как любой из них её изменит, и оба
+   * проходят проверку. Дальше два конвейера качают эфир в одну папку и затирают
+   * друг другу куски — в проекте это уже случалось.
+   *
+   * Скрипт выполняется хранилищем целиком, поэтому проверка и запись в нём
+   * неразделимы: второй запуск увидит `processing`, поставленный первым.
+   * Возвращает `false`, если запись занята живым разбором.
+   *
+   * Записи, которой ещё нет, занятие не мешает: её создаст `putStream` следом.
+   * Гонка двух одновременных добавлений одной новой записи здесь не закрыта —
+   * ущерба от неё нет, оба запуска идут по пустому месту.
+   */
+  async claimForIngest(vodId: string, nowUnix: number): Promise<boolean> {
+    const claimed = await this.call(() =>
+      this.redis.eval(CLAIM_SCRIPT, [streamKey(vodId)], [nowUnix, STALE_PROCESSING_SECONDS]),
+    );
+    return Number(claimed) === 1;
+  }
+
+  /**
    * Запись реестра и её место в списке по дате меняются вместе: список,
    * разошедшийся с записями, ломает и страницу, и выбор «что разбирать».
    */
@@ -373,6 +397,22 @@ function defined<K extends string, V>(key: K, value: V | undefined): Record<K, V
 function isStatus(value: string): value is StreamStatus {
   return value === "processing" || value === "ready" || value === "skipped" || value === "failed";
 }
+
+/**
+ * Занятие записи под разбор одним действием хранилища.
+ *
+ * Смысл здесь в том, чего в нём нет: между проверкой и записью нет ни одного
+ * обращения к сети, поэтому окна, в которое влез бы второй запуск, тоже нет.
+ */
+const CLAIM_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 1 end
+if redis.call('HGET', KEYS[1], 'status') == 'processing' then
+  local startedAt = tonumber(redis.call('HGET', KEYS[1], 'processedAt') or '0')
+  if tonumber(ARGV[1]) - startedAt <= tonumber(ARGV[2]) then return 0 end
+end
+redis.call('HSET', KEYS[1], 'status', 'processing', 'processedAt', ARGV[1])
+return 1
+`;
 
 /** Брошенный разбор: живёт в `processing` дольше суток и должен быть взят заново. */
 export function isStale(record: StreamRecord, nowUnix: number): boolean {

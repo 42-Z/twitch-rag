@@ -10,6 +10,7 @@
 import type { Services } from "./env.ts";
 import { AppError } from "../shared/errors.ts";
 import { startStreamIngest } from "./routes/streams.ts";
+import { nameDocumentsWithoutNames } from "./naming.ts";
 import { MAX_ATTEMPTS, isStale, type StreamRecord } from "../shared/registry.ts";
 import type { TwitchVideo } from "../shared/twitch.ts";
 
@@ -126,6 +127,10 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
         if (!(error instanceof AppError) || error.code !== "busy") throw error;
       }
     }
+
+    // Имена документам, разобранным до их появления (FR-022). Стоит после
+    // отбора: работа разовая и не должна задерживать поиск новых записей.
+    await nameDocumentsWithoutNames(known.values(), services);
 
     await services.registry.recordCheck({ at: nowUnix });
   } catch (error) {

@@ -14,7 +14,7 @@
  */
 
 import { useState } from "react";
-import { documentName } from "@/shared/document-name.ts";
+import { recordLabel } from "../lib/format.ts";
 import { Button } from "@/components/ui/button.tsx";
 import type { StreamSummary } from "../lib/registry.ts";
 
@@ -67,7 +67,7 @@ export function StreamActions({
             // после (FR-035). О замене документа говорится только тогда,
             // когда заменять есть что.
             const confirmed = window.confirm(
-              `Разобрать «${documentName(stream) || stream.vodId}» заново?\n\n` +
+              `Разобрать «${recordLabel(stream)}» заново?\n\n` +
                 "Запись будет скачана и распознана повторно — это стоит столько же, " +
                 "сколько первый разбор." +
                 (hasDocument ? " Прежний документ и знания заменятся новыми." : ""),
@@ -85,7 +85,7 @@ export function StreamActions({
           variant="ghost"
           disabled={busy !== undefined}
           onClick={() => {
-            if (!window.confirm(`Удалить «${documentName(stream) || stream.vodId}» из базы знаний?`)) return;
+            if (!window.confirm(`Удалить «${recordLabel(stream)}» из базы знаний?`)) return;
             void run("delete", () => onDelete(stream.vodId), "deleted");
           }}
         >

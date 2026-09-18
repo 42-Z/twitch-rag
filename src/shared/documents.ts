@@ -104,6 +104,40 @@ export class Documents {
 }
 
 /**
+ * Заголовки разделов из готового документа.
+ *
+ * Нужны, чтобы выработать имя документу, разобранному до появления имён, не
+ * перечитывая эфир: имя делается по оглавлению, а оглавление в документе уже
+ * есть. Заголовок раздела отделяется от времени, которое дописано в той же
+ * строке в квадратных скобках (`## Тема [0:12:34 — 0:25:01]`).
+ */
+export function documentSectionTitles(markdown: string): string[] {
+  const titles: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (!line.startsWith("## ")) continue;
+    const title = line.slice(3).replace(/\s*\[[^\]]*\]$/, "").trim();
+    if (title !== "") titles.push(title);
+  }
+  return titles;
+}
+
+/**
+ * Тот же документ с новым именем в шапке.
+ *
+ * Документ пишется нами и шапку имеет всегда; её отсутствие означает, что
+ * документ не наш, и молча оставить старое имя значило бы соврать о
+ * результате.
+ */
+export function renameDocumentHeader(markdown: string, name: string): string {
+  const lines = markdown.split("\n");
+  if (lines[0]?.startsWith("# ") !== true) {
+    throw new Error("В документе нет шапки — имя заменить негде.");
+  }
+  lines[0] = `# ${name}`;
+  return lines.join("\n");
+}
+
+/**
  * Шапка документа: то, что человек видит до первого раздела.
  *
  * Заголовок здесь — имя документа, выработанное по содержанию эфира, а не

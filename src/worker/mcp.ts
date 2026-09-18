@@ -126,7 +126,12 @@ export function createMcpServer(env: Env): McpServer {
       const lines = ready.map((stream) => {
         const categories = stream.categories.map((chapter) => chapter.title).join(", ");
         const duration = formatClock(stream.durationSeconds);
-        return `${stream.publishedAt.slice(0, 10)} · «${documentName(stream)}» · ${duration} · разделов: ${stream.sectionCount ?? 0}${categories === "" ? "" : ` · ${categories}`}`;
+        // Имени может не быть: запись разобрана до того, как документы стали
+        // именоваться. Пустые кавычки читались бы как пропуск в ответе, а
+        // «без имени» говорит, что это состояние записи, а не сбой вывода.
+        const name = documentName(stream);
+        const label = name === "" ? "без имени" : `«${name}»`;
+        return `${stream.publishedAt.slice(0, 10)} · ${label} · ${duration} · разделов: ${stream.sectionCount ?? 0}${categories === "" ? "" : ` · ${categories}`}`;
       });
 
       return {

@@ -188,6 +188,44 @@ export class Knowledge {
     return stale.length;
   }
 
+  /**
+   * Новое имя документа во всех кусках трансляции (FR-025).
+   *
+   * Кусок несёт имя в метаданных не случайно: иначе каждая строка выдачи
+   * требовала бы отдельного обращения к реестру. Приводится оно здесь.
+   *
+   * `update` затирает метаданные целиком, а не дополняет их — проверено на
+   * живом индексе, — поэтому каждый кусок сперва читается, а потом
+   * записывается обратно с изменённым полем. Обход при этом не сбивается:
+   * в отличие от удаления, обновление не сдвигает страницы под собой.
+   */
+  async renameStream(vodId: string, title: string): Promise<number> {
+    let renamed = 0;
+    let cursor = "0";
+    try {
+      do {
+        const page: {
+          nextCursor: string;
+          vectors: Array<{ id: string; metadata?: Record<string, unknown> }>;
+        } = await this.index.range({
+          cursor,
+          limit: 100,
+          prefix: `${vodId}:`,
+          includeMetadata: true,
+        });
+        for (const vector of page.vectors) {
+          if (vector.metadata === undefined) continue;
+          await this.index.update({ id: vector.id, metadata: { ...vector.metadata, title } });
+          renamed += 1;
+        }
+        cursor = page.nextCursor;
+      } while (cursor !== "");
+    } catch (error) {
+      throw upstreamError("векторная база", error);
+    }
+    return renamed;
+  }
+
   async stats(): Promise<{ vectorCount: number }> {
     try {
       const info = await this.index.info();

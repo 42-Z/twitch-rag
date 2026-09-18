@@ -23,6 +23,8 @@ function envWith(overrides: Partial<Env> = {}): Env {
 function servicesWith(options: {
   existing?: StreamRecord;
   video?: { title: string; url: string; publishedAt: string; publishedAtUnix: number; durationSeconds: number; viewable: string; mutedSegments: never[] };
+  /** Запись занята: хранилище отказало в занятии. */
+  busyClaim?: boolean;
 } = {}): { services: Services; puts: unknown[]; boxCalls: unknown[]; deletedChunks: number } {
   const puts: unknown[] = [];
   const boxCalls: unknown[] = [];
@@ -30,6 +32,9 @@ function servicesWith(options: {
   const services = {
     registry: {
       getStream: async () => options.existing,
+      // Занятие записи: заглушка по умолчанию отдаёт её запуску. Проверки,
+      // которым нужен отказ, задают busyClaim.
+      claimForIngest: async () => options.busyClaim !== true,
       putStream: async (record: unknown) => {
         puts.push(record);
       },
@@ -354,6 +359,27 @@ describe("POST /api/streams/:vodId/reparse", () => {
       expect((error as AppError).code).toBe("not_found");
     }
     expect(boxCalls).toHaveLength(0);
+  });
+
+  test("запись, занятая другим запуском, не запускается второй раз", async () => {
+    // Занятие решается хранилищем одним действием: проверка выше читает
+    // запись отдельно от записи, и между ними второй запуск успел бы
+    // проскочить. Здесь запись свежая, то есть проверка выше её пропускает,
+    // а занятие — нет; так и выглядит гонка со стороны проигравшего.
+    const { services, puts, boxCalls } = servicesWith({
+      existing: streamRecord({ status: "failed" }),
+      busyClaim: true,
+    });
+
+    try {
+      await handleReparseStream("2345678901", reparseRequest(), envWith(), services, "https://worker.example");
+      throw new Error("ожидалась ошибка busy");
+    } catch (error) {
+      expect((error as AppError).code).toBe("busy");
+      expect((error as AppError).status).toBe(409);
+    }
+    expect(boxCalls).toHaveLength(0);
+    expect(puts).toHaveLength(0);
   });
 
   test("без токена владельца повтор не запускается", async () => {

@@ -14,12 +14,8 @@ import { Badge } from "@/components/ui/badge.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
 import { StreamActions } from "./StreamActions.tsx";
+import { formatDate, recordLabel } from "../lib/format.ts";
 import { listStreams, type StreamSummary } from "../lib/registry.ts";
-
-function formatDate(iso: string): string {
-  if (iso === "") return "дата неизвестна";
-  return new Date(iso).toLocaleDateString("ru-RU", { year: "numeric", month: "long", day: "numeric" });
-}
 
 interface StreamListProps {
   onOpen: (vodId: string) => void;
@@ -125,8 +121,9 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
         <ul className="divide-y">
           {/* Заголовок с площадки в показе не участвует: документ
               представляется именем, выработанным по содержанию эфира
-              (FR-025, FR-027). Прежний заголовок остаётся только у записей,
-              разобранных до появления имён, — до повторного разбора. */}
+              (FR-025, FR-027). У записи, разобранной до появления имён, имени
+              ещё нет — она и подписана «без названия» до тех пор, пока имя не
+              выработается; рядом стоит дата, и запись остаётся различимой. */}
           {ready.map((stream) => (
             <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
               <div className="flex items-start justify-between gap-4">
@@ -173,9 +170,10 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
               <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    {/* Имя документа у перебираемой записи уже есть с прошлого
-                        разбора — показывается оно, а не заголовок с площадки. */}
-                    <p className="font-medium">{documentName(stream) || stream.vodId}</p>
+                    {/* Имени у такой записи может не быть вовсе: документ ещё
+                        не составлен. Тогда запись опознаётся по дате эфира —
+                        заголовок с площадки не показывается и здесь. */}
+                    <p className="font-medium">{recordLabel(stream)}</p>
                     <p className="text-sm text-muted-foreground">
                       {stream.status === "processing"
                         ? "разбирается…"
@@ -201,7 +199,7 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
               <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="font-medium text-muted-foreground">{documentName(stream) || stream.vodId}</p>
+                    <p className="font-medium text-muted-foreground">{recordLabel(stream)}</p>
                     <p className="text-sm text-muted-foreground">{stream.reason ?? "причина не указана"}</p>
                   </div>
                   {actions(stream)}

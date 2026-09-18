@@ -108,6 +108,18 @@ export async function startStreamIngest(
     return;
   }
 
+  // Занятие записи — вплотную к запуску и одним действием хранилища:
+  // проверка выше читает запись отдельно от записи, и в это окно второй запуск
+  // успевает проскочить. Здесь проскочить некуда. Стоит оно после опроса
+  // площадки нарочно: откажись площадка отвечать, запись осталась бы занятой
+  // до истечения суток, а разбора бы не было.
+  const claimed = await services.registry.claimForIngest(vodId, Math.floor(Date.now() / 1000));
+  if (!claimed) {
+    throw new AppError("busy", "Эта запись уже разбирается.", {
+      hint: "Дождитесь окончания разбора — второй запуск испортил бы работу первому.",
+    });
+  }
+
   await services.registry.putStream({
     vodId,
     status: "processing",

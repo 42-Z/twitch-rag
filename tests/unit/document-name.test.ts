@@ -63,18 +63,22 @@ describe("имя документа из реестра", () => {
     expect(documentName(summary!)).toBe("Как разыграли зрителей треком на час");
   });
 
-  test("без имени остаётся заголовок с площадки — до повторного разбора", () => {
+  test("заголовок с площадки именем не подставляется", () => {
+    // FR-027: он кликбейт и о содержании эфира не говорит, а показанный там,
+    // где ждут имя, выдаёт себя за имя документа. Запись, разобранная до
+    // появления имён, имени не имеет — так и показывается, а место показа
+    // решает, чем её опознать.
     const summary = toSummary(["vodId", "1", "status", "ready", "title", "Старая запись"]);
 
     expect(summary?.docTitle).toBeUndefined();
-    expect(documentName(summary!)).toBe("Старая запись");
+    expect(documentName(summary!)).toBe("");
   });
 
-  test("пустое имя не подменяет собой заголовок молча", () => {
+  test("пустое имя читается как отсутствие имени", () => {
     const summary = toSummary(["vodId", "1", "status", "ready", "title", "Старая запись", "docTitle", ""]);
 
     expect(summary?.docTitle).toBeUndefined();
-    expect(documentName(summary!)).toBe("Старая запись");
+    expect(documentName(summary!)).toBe("");
   });
 
   test("запись без vodId не превращается в пустую строку списка", () => {
