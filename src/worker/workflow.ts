@@ -215,14 +215,17 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     }
 
     // --- разделы ---
-    const sections = await step.do("привести разделы к рабочему виду", async () => {
-      const ordered = [...written].sort((a, b) => a.startSeconds - b.startSeconds);
-      const withCategories = assignCategories(normalizeSections(ordered), params.categories);
-      if (withCategories.length === 0) {
-        throw new Error("после приведения не осталось ни одного раздела");
-      }
-      return withCategories;
-    });
+    // Не шагом. Результат шага площадка хранит в состоянии экземпляра, и его
+    // размер ограничен мегабайтом: здесь же в руках оказывается документ
+    // целиком, а на очень длинном эфире он к этому пределу подходит. Работа
+    // эта чистая и упасть не может — ей нечего повторять, — а переменные
+    // прогона при переигровке восстанавливаются из результатов шагов выше, и
+    // в состояние ничего лишнего не ложится.
+    const ordered = [...written].sort((a, b) => a.startSeconds - b.startSeconds);
+    const sections = assignCategories(normalizeSections(ordered), params.categories);
+    if (sections.length === 0) {
+      throw new Error("после приведения не осталось ни одного раздела");
+    }
 
     const gaps = findCoverageGaps(sections, params.durationSeconds);
     if (gaps.length > 0) {

@@ -25,6 +25,8 @@ export interface IngestFailedBody {
   failed: true;
   code: string;
   message: string;
+  /** Номер захода. Отсутствует у прогонов прежней сборки — тогда отказ берётся как есть. */
+  runId?: string;
 }
 
 export function requireIngestSecret(request: Request, env: Env): void {
@@ -75,6 +77,17 @@ function workflowInstanceId(vodId: string, runId: string): string {
   return `ingest-${vodId}-${runId}`;
 }
 
+/** Начался ли разбор этого захода. */
+async function instanceStarted(env: Env, vodId: string, runId: string): Promise<boolean> {
+  try {
+    await env.INGEST.get(workflowInstanceId(vodId, runId));
+    return true;
+  } catch {
+    // Нет разбора — нет и запоздания: обычный отказ, его и применяем.
+    return false;
+  }
+}
+
 /** Имя прогона идёт в идентификатор инстанса, поэтому форма проверяется. */
 function requireRunId(value: unknown): string {
   if (typeof value !== "string" || !/^[A-Za-z0-9-]{8,64}$/.test(value)) {
@@ -106,6 +119,16 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
     // Присланное боксом сообщение остаётся в журнале: в реестр идёт своя
     // фраза, потому что реестр читается публичным токеном.
     console.error(`[разбор ${body.vodId}] отказ бокса ${body.code}: ${body.message}`);
+
+    // Отказ, пришедший после того, как разбор этого же захода уже начался, —
+    // запоздавший: это тот заход, у которого не дошёл ответ на сигнал
+    // готовности. Помечать запись отказавшей нельзя: разбор идёт, а помеченная
+    // запись попадёт под автоматический повтор и пойдёт второй раз (FR-029).
+    if (body.runId !== undefined && (await instanceStarted(env, body.vodId, body.runId))) {
+      console.error(`[разбор ${body.vodId}] отказ захода ${body.runId} запоздал — разбор уже идёт`);
+      return Response.json({ vodId: body.vodId, status: "processing" });
+    }
+
     await services.registry.patchStream(body.vodId, {
       status,
       reason: FAILURE_REASONS[body.code] ?? UNKNOWN_FAILURE_REASON,

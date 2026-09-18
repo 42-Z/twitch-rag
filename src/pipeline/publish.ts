@@ -82,7 +82,7 @@ export class Publisher {
   async notifyFailure(
     callbackUrl: string,
     secret: string,
-    failure: { vodId: string; code: string; message: string },
+    failure: { vodId: string; runId: string; code: string; message: string },
   ): Promise<void> {
     await this.postJson(callbackUrl, secret, { ...failure, failed: true });
   }

@@ -192,13 +192,20 @@ const responseFormat =
     ? DOCUMENT_RESPONSE_FORMAT
     : { type: "json_schema", json_schema: { name: "document", strict: true, schema: JSON.parse(schema) } };
 
+/**
+ * Потолок выхода называется так же, как в боевом коде.
+ *
+ * Раньше здесь стояло `max_tokens`, и это была не мелочь: замер мерил не ту
+ * форму запроса, что уходит в работу, а решение по длине прохода принималось
+ * по замеру. Поля означают одно и то же, но спрашивать надо то же самое.
+ */
 async function chat(system: string, users: string[], maxTokens: number, json = true): Promise<any> {
   const response = await fetch(API, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: maxTokens,
+      max_completion_tokens: maxTokens,
       temperature: TEMPERATURE,
       ...(reasoning === "" ? {} : { reasoning: JSON.parse(reasoning) }),
       ...(json ? { response_format: responseFormat } : {}),
