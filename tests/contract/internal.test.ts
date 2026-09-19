@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterEach } from "bun:test";
 import { handleIngestReady, requireIngestSecret } from "../../src/worker/routes/internal.ts";
 import { AppError } from "../../src/shared/errors.ts";
 import type { Env, Services } from "../../src/worker/env.ts";
@@ -46,8 +46,23 @@ function fakeServices(captured?: Captured): Services {
         captured?.patched.push({ vodId, patch });
       },
     },
+    // Площадка отвечает про саму запись. По умолчанию запись на месте:
+    // проверки, которым нужен приговор, задают videoGone.
+    twitch: {
+      getVideo: async (vodId: string) => {
+        if (videoGone) throw new AppError("vod_unavailable", "Запись недоступна: она удалена или закрыта.");
+        return { vodId, title: "Тест" };
+      },
+    },
   } as unknown as Services;
 }
+
+/** Запись пропала навсегда — так отвечает площадка. */
+let videoGone = false;
+
+afterEach(() => {
+  videoGone = false;
+});
 
 function body(overrides: Record<string, unknown> = {}) {
   return {
@@ -246,6 +261,34 @@ describe("POST /api/internal/ingest-ready", () => {
     );
 
     expect(captured.patched[0]?.patch["status"]).toBe("failed");
+  });
+
+  test("«не найдена», а площадка запись видит — оставляем к повтору", async () => {
+    // yt-dlp говорит «not found» и про удалённую запись, и про минутную
+    // заминку. Приговор по её словам терял бы целый эфир: так и случилось с
+    // записью, которая через час скачалась без единой жалобы. Решает площадка.
+    const captured: Captured = { patched: [], put: [] };
+
+    await handleIngestReady(
+      request({ vodId: "2873255697", failed: true, code: "not_found", message: "Запись удалена или недоступна." }),
+      fakeEnv(),
+      fakeServices(captured),
+    );
+
+    expect(captured.patched[0]?.patch["status"]).toBe("failed");
+  });
+
+  test("«не найдена», и площадка её не видит — пропускаем навсегда", async () => {
+    const captured: Captured = { patched: [], put: [] };
+    videoGone = true;
+
+    await handleIngestReady(
+      request({ vodId: "2873255697", failed: true, code: "not_found", message: "Запись удалена или недоступна." }),
+      fakeEnv(),
+      fakeServices(captured),
+    );
+
+    expect(captured.patched[0]?.patch["status"]).toBe("skipped");
   });
 
   test("незнакомый код отказа тоже получает свою фразу", async () => {
