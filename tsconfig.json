@@ -38,6 +38,7 @@
     "src/lib",
     "tests/unit",
     "tests/integration",
+    "tests/e2e",
     "build.ts"
   ],
   // tests/contract и тесты, тянущие окружение Worker, типизируются вместе с

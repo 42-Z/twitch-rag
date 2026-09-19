@@ -1,5 +1,6 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
-import { HOST, TOKEN } from "./settings.ts";
+import { expect, type Page, type Route } from "@playwright/test";
+import { test } from "./fixtures.ts";
+import { DEAD, TOKEN } from "./settings.ts";
 
 /**
  * Что страница говорит владельцу, когда запись в разбор не взяли.
@@ -51,13 +52,18 @@ function registryAnswer(command: unknown[]): unknown {
  * Заглушки сети. Локальному сервису отдаются только страница и её файлы —
  * всё остальное, включая обращения к реестру из браузера, перехвачено.
  */
-async function stubServices(page: Page, answers: { reparse?: unknown; add?: unknown }): Promise<void> {
+async function stubServices(
+  page: Page,
+  siteUrl: string,
+  answers: { reparse?: unknown; add?: unknown },
+): Promise<void> {
+  const siteHost = new URL(siteUrl).host;
   await page.route("**/*", async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
     // Локальный сервис — только страница и её файлы: всё остальное, включая
     // обращения к реестру прямо из браузера, перехвачено ниже.
-    const local = url.host === HOST;
+    const local = url.host === siteHost;
 
     if (local && !url.pathname.startsWith("/api/")) return route.continue();
 
@@ -105,8 +111,19 @@ async function enterToken(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Добавить запись вручную" })).toBeVisible();
 }
 
-test("добавление короткой записи: страница называет причину, а не обещает разбор", async ({ page }) => {
-  await stubServices(page, {});
+test("сервис для проверок поднят с подставным окружением", async ({ server }) => {
+  // Сторож: проверки не должны ходить в боевые хранилища. Пропадут из подъёма
+  // подставные секреты — эта проверка упадёт раньше, чем что-нибудь попадёт
+  // в боевой реестр.
+  const env = await server.harness
+    .getWorker<{ UPSTASH_REDIS_REST_URL: string; APP_ADMIN_TOKEN: string }>()
+    .getEnv();
+  expect(env.UPSTASH_REDIS_REST_URL).toBe(DEAD);
+  expect(env.APP_ADMIN_TOKEN).toBe(TOKEN);
+});
+
+test("добавление короткой записи: страница называет причину, а не обещает разбор", async ({ page, server }) => {
+  await stubServices(page, server.url, {});
   await enterToken(page);
 
   await page.getByLabel("Адрес записи").fill(VOD_URL);
@@ -116,8 +133,8 @@ test("добавление короткой записи: страница на�
   await expect(page.getByText("Запись принята в обработку.")).toHaveCount(0);
 });
 
-test("повторный разбор обрывка: причина рядом с записью, разбор не начат", async ({ page }) => {
-  await stubServices(page, {});
+test("повторный разбор обрывка: причина рядом с записью, разбор не начат", async ({ page, server }) => {
+  await stubServices(page, server.url, {});
   await enterToken(page);
 
   // Панель разделов на странице закрыта: она открывается кнопкой в шапке.
