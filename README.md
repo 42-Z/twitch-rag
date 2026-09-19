@@ -57,10 +57,10 @@ Workflow: распознать          выгрузка кусков в R2  ─
 
 ```bash
 # расшифровка участка записи (≈10 минут, ≈0,1 $)
-bun specs/002-document-quality/research/scripts/transcript.ts --vod <id> --from 20:00 --to 90:00
+node --env-file=.env specs/002-document-quality/research/scripts/transcript.ts --vod <id> --from 20:00 --to 90:00
 
 # замер (доли цента за проход)
-bun specs/002-document-quality/research/scripts/measure.ts \
+node --env-file=.env specs/002-document-quality/research/scripts/measure.ts \
   --transcript <метка> --part-minutes 30 --variants A --tag <метка прогона>
 ```
 
@@ -71,18 +71,18 @@ bun specs/002-document-quality/research/scripts/measure.ts \
 
 ## Развёртывание
 
-Нужны `bun` ≥ 1.4 и авторизованные `wrangler`, `upstash`, `box`.
+Нужны Node.js ≥ 24.12 с npm и авторизованные `wrangler`, `upstash`, `box`.
 
 ```bash
 cp .env.example .env    # заполнить значениями из раздела ниже
-bun install
-bun run build           # интерфейс в dist
-wrangler deploy         # Worker, Workflow, статика
+npm ci
+npm run build           # интерфейс в dist
+npx wrangler deploy     # Worker, Workflow, статика
 ```
 
 Секреты на сервере ставятся `wrangler secret put <ИМЯ>` для каждого значения
-из `.env.example`, кроме `BUN_PUBLIC_*` — те попадают в сборку интерфейса как
-публичные значения.
+из `.env.example`, кроме `VITE_*` — те попадают в сборку интерфейса как
+публичные значения. В сборочной среде Cloudflare они задаются переменными сборки.
 
 Прогон в боксе разворачивается отдельно от Worker — команды и порядок в
 [`plan.md`, раздел И4](./specs/001-stream-archive-rag/plan.md#и4-развёртывание).
@@ -95,15 +95,18 @@ wrangler deploy         # Worker, Workflow, статика
 ## Разработка
 
 ```bash
-bun test              # модульные и контрактные тесты
-bun run typecheck      # проверка типов Worker и остального кода отдельно
-wrangler dev           # локальный запуск Worker
+npm test               # логика под Node и Worker в его среде (Vitest)
+npm run test:e2e       # страница в браузере (Playwright)
+npm run typecheck      # проверка типов
+npm run build:pipeline # программа конвейера для бокса
+npx wrangler dev       # локальный запуск Worker
 ```
 
-Типы проверяются двумя конфигурациями (`tsconfig.json` и
-`tsconfig.worker.json`): в изоляте Cloudflare Workers нет DOM, а в браузере и
-боксе — нет типов Workers. Совместное присутствие обоих наборов типов дало бы
-двойные объявления `fetch`, `Response` и подобных.
+Типы проверяются раздельно (`tsconfig.json` — страница и проверки логики,
+`tsconfig.worker.json` — Worker и конвейер, `tests/worker/tsconfig.json` — проверки
+Worker): в изоляте Cloudflare Workers нет DOM, а в браузере нет типов Workers.
+Совместное присутствие обоих наборов типов дало бы двойные объявления `fetch`,
+`Response` и подобных.
 
 ### Вайбкодинг
 

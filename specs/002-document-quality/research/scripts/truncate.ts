@@ -10,9 +10,10 @@
  * разборе, но с заведомо малым потолком.
  *
  * Запуск:
- *   bun specs/002-document-quality/research/scripts/truncate.ts --transcript 2875806701-1200-5400
+ *   node --env-file=.env specs/002-document-quality/research/scripts/truncate.ts --transcript 2875806701-1200-5400
  */
 
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   buildDocumentSystemPrompt,
@@ -36,15 +37,15 @@ function arg(name: string, fallback?: string): string {
 const key = process.env["OPENROUTER_API_KEY"] ?? "";
 if (key === "") throw new Error("нет OPENROUTER_API_KEY");
 
-const dataDir = path.resolve(import.meta.dir, "..", "data");
+const dataDir = path.resolve(import.meta.dirname, "..", "data");
 const label = arg("transcript");
-const report = (await Bun.file(path.join(dataDir, `transcript-${label}.json`)).json()) as {
+const report = JSON.parse(await readFile(path.join(dataDir, `transcript-${label}.json`), "utf8")) as {
   title: string;
   publishedAt: string;
   section: { from: number; to: number };
   chapters: Array<{ title: string; startSeconds: number; endSeconds: number }>;
 };
-const transcript = (await Bun.file(path.join(dataDir, `transcript-${label}.txt`)).text())
+const transcript = (await readFile(path.join(dataDir, `transcript-${label}.txt`), "utf8"))
   .split("\n")
   .slice(0, 300)
   .join("\n");

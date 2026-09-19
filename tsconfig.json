@@ -1,6 +1,6 @@
 {
-  // Браузер и бокс: интерфейс, прогон в боксе, тесты.
-  // Код Worker проверяется отдельно — tsconfig.worker.json.
+  // Ветка сборщика: страница (собирает Vite) и проверки, которые исполняет Vitest.
+  // Код Worker и конвейера проверяется отдельно — tsconfig.worker.json.
   "compilerOptions": {
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "target": "ESNext",
@@ -8,7 +8,7 @@
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": true,
-    "types": ["bun", "react"],
+    "types": ["node", "react", "vite/client"],
 
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -32,13 +32,16 @@
 
   "include": [
     "src/ui",
-    "src/pipeline",
     "src/shared",
     "src/components",
     "src/lib",
     "tests/unit",
     "tests/integration",
-    "build.ts"
+    "tests/e2e",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "vitest.workers.config.ts",
+    "playwright.config.ts"
   ],
   // tests/contract и тесты, тянущие окружение Worker, типизируются вместе с
   // ним (tsconfig.worker.json) — там нет DOM-типов, конфликтующих с типами

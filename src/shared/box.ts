@@ -31,7 +31,11 @@ export interface BoxConfig {
 export const BOX_HOME = "/workspace/home";
 
 export class BoxRunner {
-  constructor(private readonly config: BoxConfig) {}
+  private readonly config: BoxConfig;
+
+  constructor(config: BoxConfig) {
+    this.config = config;
+  }
 
   /**
    * Прогон запускается откреплённым: он длится минуты, и Worker не должен

@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { runScheduledCheck, unprocessableToSkip } from "../../src/worker/schedule.ts";
 import type { StreamRecord } from "../../src/shared/registry.ts";
 import type { TwitchVideo } from "../../src/shared/twitch.ts";

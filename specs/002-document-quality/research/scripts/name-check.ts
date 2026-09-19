@@ -8,9 +8,10 @@
  * поисковой выдаче — держится кодом: во все три места идёт одно значение
  * `docTitle`, и это покрыто тестами.
  *
- * Запуск: bun specs/002-document-quality/research/scripts/name-check.ts [файл] [прогонов]
+ * Запуск: node --env-file=.env specs/002-document-quality/research/scripts/name-check.ts [файл] [прогонов]
  */
 
+import { readFile } from "node:fs/promises";
 import { OpenRouter } from "../../../../src/shared/openrouter.ts";
 
 const file =
@@ -18,7 +19,7 @@ const file =
   "specs/002-document-quality/research/data/document-2875806701-1200-5400-part40-имена-латиницей-A-со-сведениями-r1.json";
 const rounds = Number(process.argv[3] ?? 4);
 
-const parsed = (await Bun.file(file).json()) as {
+const parsed = JSON.parse(await readFile(file, "utf8")) as {
   sections: { title: string }[];
   record?: { provider?: string };
 };
