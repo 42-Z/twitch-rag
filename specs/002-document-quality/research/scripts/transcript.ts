@@ -10,13 +10,15 @@
  * ошибками распознавания, заминками и музыкой, а не письменный текст.
  *
  * Запуск:
- *   bun specs/002-document-quality/research/scripts/transcript.ts \
+ *   node --env-file=.env specs/002-document-quality/research/scripts/transcript.ts \
  *     --vod 2875806701 --from 20:00 --to 90:00
  *
  * Нужны во внешнем окружении: OPENROUTER_API_KEY, а также yt-dlp и ffmpeg.
  */
 
-import { mkdir, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import path from "node:path";
 import { readIndex } from "../../../../src/pipeline/segment.ts";
 import { shiftSegments, prevailingLanguage, type TranscriptSegment } from "../../../../src/shared/time.ts";
@@ -39,10 +41,21 @@ function clock(value: string): number {
   return hours * 3600 + minutes * 60 + seconds;
 }
 
+const execFileAsync = promisify(execFile);
+
+/** Запуск программы с выводом в память; вывод yt-dlp о записи — десятки килобайт. */
+async function capture(command: string, args: string[]): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(command, args, { maxBuffer: 64 * 1024 * 1024 });
+    return stdout;
+  } catch (error) {
+    const failed = error as { code?: number | string; stderr?: string };
+    throw new Error(`${command} завершился с кодом ${failed.code}: ${(failed.stderr ?? "").slice(-800)}`);
+  }
+}
+
 async function run(command: string, args: string[]): Promise<void> {
-  const child = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "pipe" });
-  const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
-  if (code !== 0) throw new Error(`${command} завершился с кодом ${code}: ${stderr.slice(-800)}`);
+  await capture(command, args);
 }
 
 const vod = arg("vod");
@@ -51,7 +64,7 @@ const to = clock(arg("to"));
 const key = process.env["OPENROUTER_API_KEY"] ?? "";
 if (key === "") throw new Error("нет OPENROUTER_API_KEY");
 
-const researchDir = path.resolve(import.meta.dir, "..");
+const researchDir = path.resolve(import.meta.dirname, "..");
 const dataDir = path.join(researchDir, "data");
 const workDir = path.join(dataDir, "work", vod);
 await rm(workDir, { recursive: true, force: true });
@@ -62,14 +75,12 @@ const url = `https://www.twitch.tv/videos/${vod}`;
 
 // Сведения о записи: название нужно проверкам промпта, главы — категориям.
 console.log("сведения о записи…");
-const info = Bun.spawn(["yt-dlp", "--dump-json", "--no-warnings", url], { stdout: "pipe", stderr: "pipe" });
-const infoRaw = JSON.parse(await new Response(info.stdout).text()) as {
+const infoRaw = JSON.parse(await capture("yt-dlp", ["--dump-json", "--no-warnings", url])) as {
   title?: string;
   duration?: number;
   timestamp?: number;
   chapters?: Array<{ title?: string; start_time?: number; end_time?: number }> | null;
 };
-await info.exited;
 const duration = Math.round(infoRaw.duration ?? 0);
 const chapters = (infoRaw.chapters ?? []).map((chapter) => ({
   title: (chapter.title ?? "").trim(),
@@ -103,7 +114,7 @@ const segments: TranscriptSegment[] = [];
 const chunkReports: unknown[] = [];
 
 for (const chunk of chunks) {
-  const audio = await Bun.file(path.join(workDir, chunk.file)).arrayBuffer();
+  const audio = await readFile(path.join(workDir, chunk.file));
   const form = new FormData();
   form.append("file", new Blob([audio], { type: "audio/mp4" }), `chunk-${chunk.index}.m4a`);
   form.append("model", MODEL);
@@ -160,8 +171,8 @@ const report = {
   measuredAt: new Date().toISOString(),
 };
 
-await Bun.write(path.join(dataDir, `transcript-${label}.txt`), rendered);
-await Bun.write(path.join(dataDir, `transcript-${label}.json`), `${JSON.stringify(report, null, 2)}\n`);
+await writeFile(path.join(dataDir, `transcript-${label}.txt`), rendered);
+await writeFile(path.join(dataDir, `transcript-${label}.json`), `${JSON.stringify(report, null, 2)}\n`);
 await rm(workDir, { recursive: true, force: true });
 
 console.log(`\nрасшифровка: ${rendered.length} знаков, ${segments.length} фраз, язык ${report.language}`);
