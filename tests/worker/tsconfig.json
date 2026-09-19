@@ -1,0 +1,10 @@
+{
+  // Проверки Worker'а в его среде: к типам Worker добавляются модули
+  // `cloudflare:test` и `cloudflare:workers` из плагина Cloudflare
+  // (https://developers.cloudflare.com/workers/testing/vitest-integration/write-your-first-test/).
+  "extends": "../../tsconfig.worker.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "node", "@cloudflare/vitest-plugin/types"]
+  },
+  "include": ["./**/*.ts"]
+}
