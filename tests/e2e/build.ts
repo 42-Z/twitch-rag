@@ -13,12 +13,12 @@ import { DEAD } from "./settings.ts";
  * держится.
  */
 export default function build(): void {
-  execFileSync("bun", ["run", "build"], {
+  execFileSync("npm", ["run", "build"], {
     stdio: "inherit",
     env: {
       ...process.env,
-      BUN_PUBLIC_REGISTRY_URL: DEAD,
-      BUN_PUBLIC_REGISTRY_READONLY_TOKEN: "stub",
+      VITE_REGISTRY_URL: DEAD,
+      VITE_REGISTRY_READONLY_TOKEN: "stub",
     },
   });
 }

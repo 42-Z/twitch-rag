@@ -103,7 +103,10 @@ const openRouterExtras = (sessionId: string): OpenRouterExtras => ({
 export class OpenRouter {
   private readonly client: OpenAI;
 
-  constructor(private readonly apiKey: string) {
+  private readonly apiKey: string;
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
     this.client = new OpenAI({ apiKey, baseURL: BASE_URL });
   }
 

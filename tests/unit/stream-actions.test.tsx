@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { StreamActions } from "../../src/ui/components/StreamActions.tsx";
 import type { StreamSummary } from "../../src/ui/lib/registry.ts";

@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ManagePage } from "../../src/ui/pages/ManagePage.tsx";
 import type { ChannelSummary } from "../../src/ui/lib/registry.ts";

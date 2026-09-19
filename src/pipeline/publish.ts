@@ -44,7 +44,10 @@ export class Publisher {
   private readonly client: AwsClient;
   private readonly endpoint: string;
 
-  constructor(private readonly config: R2Config) {
+  private readonly config: R2Config;
+
+  constructor(config: R2Config) {
+    this.config = config;
     this.client = new AwsClient({
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,

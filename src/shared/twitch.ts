@@ -50,10 +50,13 @@ export interface TwitchVideo {
 }
 
 export class Twitch {
-  constructor(
-    private readonly credentials: TwitchCredentials,
-    private readonly cache: TokenCache,
-  ) {}
+  private readonly credentials: TwitchCredentials;
+  private readonly cache: TokenCache;
+
+  constructor(credentials: TwitchCredentials, cache: TokenCache) {
+    this.credentials = credentials;
+    this.cache = cache;
+  }
 
   async getChannelByLogin(login: string): Promise<TwitchChannel> {
     const data = await this.helix<{ data: Array<{ id: string; login: string; display_name: string }> }>(

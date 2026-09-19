@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { renderTranscript } from "../../src/shared/openrouter.ts";
 import { shiftSegments, type TranscriptSegment } from "../../src/shared/time.ts";
 

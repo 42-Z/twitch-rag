@@ -154,3 +154,15 @@ test("повторный разбор обрывка: причина рядом 
   await expect(page.getByText("В обработке")).toHaveCount(0);
   await expect(page.getByText(STORED_REASON)).toBeVisible();
 });
+
+test("стили компонентов попали в сборку", async ({ page, server }) => {
+  // Сторож сборки: классы Tailwind ищутся от корня сборки, а у Vite он — папка
+  // страницы. Без явного указания источника компоненты из `src/components`
+  // оставались без стилей, и сборка проходила, не сказав ни слова. Кнопка
+  // меню — квадрат 36 пикселей только благодаря классу из `components/ui`.
+  await stubServices(page, server.url, {});
+  await page.goto("/manage");
+  const box = await page.getByRole("button", { name: "Открыть меню" }).boundingBox();
+  expect(box?.width).toBe(36);
+  expect(box?.height).toBe(36);
+});

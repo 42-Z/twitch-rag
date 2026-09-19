@@ -17,9 +17,9 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  // Расширение `.e2e.ts`, а не `.spec.ts`: `bun test` собирает по всему
-  // проекту всё, что названо тестом, и на файле с проверками Playwright
-  // падал бы — их `test()` работает только под своим запускающим.
+  // Расширение `.e2e.ts`, а не `.test.ts`: Vitest собирает всё, что названо
+  // тестом, и на файле с проверками Playwright падал бы — их `test()`
+  // работает только под своим запускающим.
   testMatch: "**/*.e2e.ts",
   timeout: 60_000,
   fullyParallel: false,
