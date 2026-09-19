@@ -4,14 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun run build.ts",
-    "dev:ui": "bun build --watch src/ui/index.html --outdir dist",
+    "build": "vite build",
+    "dev:ui": "vite build --watch",
     "dev:worker": "wrangler dev",
-    "deploy": "bun run build && wrangler deploy",
-    "test": "bun test",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
-    "cf-typegen": "wrangler types",
-    "test:e2e": "playwright test"
+    "deploy": "npm run build && wrangler deploy",
+    "test": "vitest run",
+    "test:integration": "INTEGRATION=1 vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tests/worker/tsconfig.json",
+    "build:pipeline": "esbuild src/pipeline/main.ts --bundle --platform=node --format=esm --target=node24 --outfile=pipeline.mjs",
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -25,7 +27,6 @@
     "@upstash/vector": "^1.2.3",
     "agents": "^0.23.0",
     "aws4fetch": "^1.0.20",
-    "bun-plugin-tailwind": "^0.1.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cn": "^0.3.0",
@@ -39,16 +40,31 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.13",
     "@cloudflare/workers-types": "^5.20260915.1",
+    "@msw/cloudflare": "^0.0.1",
     "@playwright/test": "^1.63.0",
-    "@types/bun": "latest",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.13.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.1.1",
+    "esbuild": "^0.28.2",
+    "msw": "^2.15.0",
     "tailwindcss": "^4.1.11",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^4.1.11",
     "wrangler": "^4.131.2"
   },
-  "peerDependencies": {
-    "typescript": "^7"
+  "description": "База знаний по трансляциям Twitch для ИИ-ассистентов",
+  "engines": {
+    "node": ">=24.12"
   },
-  "description": "База знаний по трансляциям Twitch для ИИ-ассистентов"
+  "allowScripts": {
+    "esbuild": true,
+    "workerd": true,
+    "core-js-pure": false,
+    "msw": false
+  }
 }

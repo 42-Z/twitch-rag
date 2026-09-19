@@ -15,9 +15,10 @@
  * промптом не берётся и нужна проверка на выходе.
  *
  * Запуск:
- *   bun specs/002-document-quality/research/scripts/measure.ts --transcript 2875806701-1200-5400
+ *   node --env-file=.env specs/002-document-quality/research/scripts/measure.ts --transcript 2875806701-1200-5400
  */
 
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DOCUMENT_RESPONSE_FORMAT } from "../../../../src/shared/document-schema.ts";
 import { MAX_OUTPUT_TOKENS as CODE_MAX_OUTPUT_TOKENS, MODELS } from "../../../../src/shared/openrouter.ts";
@@ -51,7 +52,7 @@ function arg(name: string, fallback?: string): string {
 const key = process.env["OPENROUTER_API_KEY"] ?? "";
 if (key === "") throw new Error("нет OPENROUTER_API_KEY");
 
-const researchDir = path.resolve(import.meta.dir, "..");
+const researchDir = path.resolve(import.meta.dirname, "..");
 const dataDir = path.join(researchDir, "data");
 const label: string = arg("transcript");
 const limit = Number(arg("chars", "60000"));
@@ -69,8 +70,8 @@ interface TranscriptReport {
   chapters: Array<{ title: string; startSeconds: number; endSeconds: number }>;
 }
 
-const report = (await Bun.file(path.join(dataDir, `transcript-${label}.json`)).json()) as TranscriptReport;
-const full = await Bun.file(path.join(dataDir, `transcript-${label}.txt`)).text();
+const report = JSON.parse(await readFile(path.join(dataDir, `transcript-${label}.json`), "utf8")) as TranscriptReport;
+const full = await readFile(path.join(dataDir, `transcript-${label}.txt`), "utf8");
 
 /** Участок режется по границе фразы: обрывок строки исказил бы замер. */
 function slice(text: string, chars: number): string {
@@ -280,9 +281,9 @@ for (const variant of chosen) {
     parsed: sections.length > 0,
   };
   results.push(record);
-  await Bun.write(path.join(dataDir, `document-${runLabel}-${variant.name}${roundLabel}.json`), `${JSON.stringify({ record, sections }, null, 2)}\n`);
+  await writeFile(path.join(dataDir, `document-${runLabel}-${variant.name}${roundLabel}.json`), `${JSON.stringify({ record, sections }, null, 2)}\n`);
   // Сырой ответ — на случай, если понадобится разобрать его иначе, чем здесь.
-  await Bun.write(path.join(dataDir, `raw-${runLabel}-${variant.name}${roundLabel}.json`), `${JSON.stringify(response, null, 2)}\n`);
+  await writeFile(path.join(dataDir, `raw-${runLabel}-${variant.name}${roundLabel}.json`), `${JSON.stringify(response, null, 2)}\n`);
 
   const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens ?? 0;
   console.log(
@@ -310,5 +311,5 @@ const summary = {
   limits: { maxOutputTokens: MAX_OUTPUT_TOKENS, contextTokens: 262144, provider: "Novita", altProviderContext: 131072 },
   results,
 };
-await Bun.write(path.join(dataDir, `measure-${runLabel}.json`), `${JSON.stringify(summary, null, 2)}\n`);
+await writeFile(path.join(dataDir, `measure-${runLabel}.json`), `${JSON.stringify(summary, null, 2)}\n`);
 console.log(`\nсохранено: data/measure-${runLabel}.json`);

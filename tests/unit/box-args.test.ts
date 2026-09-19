@@ -1,4 +1,5 @@
-import { test, expect, describe, afterAll } from "bun:test";
+import { test, expect, describe, afterAll } from "vitest";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,7 +81,7 @@ describe("команда запуска прогона", () => {
     return home;
   }
 
-  function run(home: string): { code: number; stderr: string } {
+  function run(home: string): { code: number | null; stderr: string } {
     const command = buildIngestCommand({
       vodId: "2345678901",
       url: "https://www.twitch.tv/videos/2345678901",
@@ -90,8 +91,8 @@ describe("команда запуска прогона", () => {
     });
     // Оболочка та же, что у бокса, и без «bash» на конце: команда обязана быть
     // обычным sh, иначе на боксе она может просто не разобраться.
-    const result = Bun.spawnSync(["sh", "-c", command]);
-    return { code: result.exitCode, stderr: result.stderr.toString() };
+    const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+    return { code: result.status, stderr: result.stderr };
   }
 
   test("без файла прогона запуск отвергается, а не проходит молча", () => {

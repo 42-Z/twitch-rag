@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { renderDocumentHeader } from "../../src/shared/documents.ts";
 import { documentName } from "../../src/shared/document-name.ts";
 import { toSummary } from "../../src/ui/lib/registry.ts";

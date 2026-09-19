@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MENU_ROUTES, ROUTES, type RouteId } from "../../src/ui/lib/routes.ts";
 

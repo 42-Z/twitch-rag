@@ -1,4 +1,4 @@
-import { test, expect, describe, afterEach } from "bun:test";
+import { test, expect, describe, afterEach, vi } from "vitest";
 
 /**
  * Чтение списка трансляций из реестра — на подменённой сети.
@@ -11,8 +11,8 @@ import { test, expect, describe, afterEach } from "bun:test";
  */
 // Адрес подставляется до загрузки модуля: он читает его один раз при
 // импорте, и без этого проверка зависела бы от того, подложено ли окружение.
-process.env.BUN_PUBLIC_REGISTRY_URL = "https://registry.test";
-process.env.BUN_PUBLIC_REGISTRY_READONLY_TOKEN = "readonly-token";
+vi.stubEnv("VITE_REGISTRY_URL", "https://registry.test");
+vi.stubEnv("VITE_REGISTRY_READONLY_TOKEN", "readonly-token");
 
 const { listStreams } = await import("../../src/ui/lib/registry.ts");
 

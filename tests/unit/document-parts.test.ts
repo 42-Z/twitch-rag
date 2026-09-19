@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { composePart, type PartComposition } from "../../src/shared/document-parts.ts";
 import { AppError } from "../../src/shared/errors.ts";
 import type { ComposedSection, DocumentPartRequest } from "../../src/shared/openrouter.ts";

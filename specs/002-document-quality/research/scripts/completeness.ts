@@ -12,10 +12,11 @@
  * раздела, — чтобы проверялось ровно то, что модель должна была описать.
  *
  * Запуск:
- *   bun specs/002-document-quality/research/scripts/completeness.ts \
+ *   node --env-file=.env specs/002-document-quality/research/scripts/completeness.ts \
  *     --document data/document-...-A-сегодня.json --transcript 2875806701-1200-5400
  */
 
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const API = "https://openrouter.ai/api/v1/chat/completions";
@@ -35,7 +36,7 @@ function arg(name: string, fallback?: string): string {
 const key = process.env["OPENROUTER_API_KEY"] ?? "";
 if (key === "") throw new Error("нет OPENROUTER_API_KEY");
 
-const dataDir = path.resolve(import.meta.dir, "..", "data");
+const dataDir = path.resolve(import.meta.dirname, "..", "data");
 const documentPath = path.resolve(process.cwd(), arg("document"));
 const label = arg("transcript");
 
@@ -43,14 +44,14 @@ interface DocumentFile {
   sections: Array<{ title: string; text: string; startSeconds: number; endSeconds: number }>;
 }
 
-const document = (await Bun.file(documentPath).json()) as DocumentFile;
+const document = JSON.parse(await readFile(documentPath, "utf8")) as DocumentFile;
 if (document.sections.length === 0) throw new Error("в документе нет разделов");
 
 const from = Math.min(...document.sections.map((section) => section.startSeconds));
 const to = Math.max(...document.sections.map((section) => section.endSeconds));
 
 /** Расшифровка режется по времени документа: только то, что он должен был описать. */
-const transcript = (await Bun.file(path.join(dataDir, `transcript-${label}.txt`)).text())
+const transcript = (await readFile(path.join(dataDir, `transcript-${label}.txt`), "utf8"))
   .split("\n")
   .filter((line) => {
     const match = line.match(/^\[(\d+)\]/);
@@ -94,7 +95,7 @@ if (!response.ok) throw new Error(`модель ответила ${response.stat
 const body = (await response.json()) as any;
 const answer: string = body.choices?.[0]?.message?.content ?? "";
 const outPath = `${documentPath.replace(/\.json$/, "")}-потери.txt`;
-await Bun.write(outPath, `${answer.trim()}\n`);
+await writeFile(outPath, `${answer.trim()}\n`);
 
 console.log(`\nрасход: ${body.usage?.completion_tokens} токенов выхода, ${body.usage?.cost ?? "?"} $`);
 console.log(`ответ проверяющего:\n${answer.trim()}`);

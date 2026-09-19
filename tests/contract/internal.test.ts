@@ -1,4 +1,4 @@
-import { test, expect, describe, afterEach } from "bun:test";
+import { test, expect, describe, afterEach } from "vitest";
 import { handleIngestReady, requireIngestSecret } from "../../src/worker/routes/internal.ts";
 import { AppError } from "../../src/shared/errors.ts";
 import type { Env, Services } from "../../src/worker/env.ts";

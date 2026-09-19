@@ -1,4 +1,4 @@
-import { test, expect, describe, afterEach } from "bun:test";
+import { test, expect, describe, afterEach } from "vitest";
 import { Twitch, type TokenCache, type TwitchVideo } from "../../src/shared/twitch.ts";
 
 /**

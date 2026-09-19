@@ -18,6 +18,12 @@ import { STUB_SECRETS } from "./settings.ts";
  * заглушки приводит к отказу, а не к обращению к боевому хранилищу.
  */
 
+// Wrangler в локальном запуске подкладывает секреты из `.env`, где лежат боевые
+// значения; подменённые выше перекрывают их, но и остальным там делать нечего.
+// Отключается переменной процесса, запускающего инструменты
+// (https://developers.cloudflare.com/workers/local-development/environment-variables/).
+process.env["CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV"] = "false";
+
 export interface HarnessFixture {
   harness: TestHarness;
   /** Адрес, по которому отвечает поднятый сервис. */

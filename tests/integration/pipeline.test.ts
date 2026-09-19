@@ -5,13 +5,13 @@
  * Тест тратит настоящие деньги (распознавание, модель, эмбеддинги) и работает
  * только против развёрнутого сервиса, поэтому запускается по явному согласию:
  *
- *   INTEGRATION=1 bun test tests/integration
+ *   npm run test:integration
  *
  * Берётся самая короткая запись канала — тридцать семь секунд: путь тот же,
  * что у пятичасового эфира, а стоит доли копейки.
  */
 
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { Redis } from "@upstash/redis";
 import { AwsClient } from "aws4fetch";
 
