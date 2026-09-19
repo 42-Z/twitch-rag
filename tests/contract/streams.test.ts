@@ -25,16 +25,26 @@ function servicesWith(options: {
   video?: { title: string; url: string; publishedAt: string; publishedAtUnix: number; durationSeconds: number; viewable: string; mutedSegments: never[] };
   /** Запись занята: хранилище отказало в занятии. */
   busyClaim?: boolean;
-} = {}): { services: Services; puts: unknown[]; boxCalls: unknown[]; deletedChunks: number } {
+} = {}): {
+  services: Services;
+  puts: unknown[];
+  boxCalls: unknown[];
+  claims: number;
+  deletedChunks: number;
+} {
   const puts: unknown[] = [];
   const boxCalls: unknown[] = [];
+  let claims = 0;
   let deletedChunks = 0;
   const services = {
     registry: {
       getStream: async () => options.existing,
       // Занятие записи: заглушка по умолчанию отдаёт её запуску. Проверки,
       // которым нужен отказ, задают busyClaim.
-      claimForIngest: async () => options.busyClaim !== true,
+      claimForIngest: async () => {
+        claims++;
+        return options.busyClaim !== true;
+      },
       putStream: async (record: unknown) => {
         puts.push(record);
       },
@@ -68,7 +78,17 @@ function servicesWith(options: {
       },
     },
   } as unknown as Services;
-  return { services, puts, boxCalls, get deletedChunks() { return deletedChunks; } };
+  return {
+    services,
+    puts,
+    boxCalls,
+    get claims() {
+      return claims;
+    },
+    get deletedChunks() {
+      return deletedChunks;
+    },
+  };
 }
 
 function request(body: unknown, token = ADMIN_TOKEN): Request {
@@ -216,6 +236,95 @@ describe("POST /api/streams — ручное добавление", () => {
     } catch (error) {
       expect((error as AppError).code).toBe("unauthorized");
     }
+  });
+});
+
+/** Запись, которую разбирать нечего: обрывок неудавшегося запуска эфира. */
+const SHORT_VIDEO = {
+  title: "РАССКАЗЫВАЮ ИСТОРИИ",
+  url: "https://www.twitch.tv/videos/2345678901",
+  publishedAt: "2026-07-27T12:00:00Z",
+  publishedAtUnix: 1785153600,
+  durationSeconds: 16,
+  viewable: "public",
+  mutedSegments: [] as never[],
+};
+
+describe("короткая запись", () => {
+  const SHORT_REASON = "Запись короче трёх минут — разбирать в ней нечего.";
+
+  test("в разбор не берётся: записи не занимаются, бокс не зовётся", async () => {
+    const { services, puts, boxCalls, claims } = servicesWith({ video: SHORT_VIDEO });
+
+    await handleAddStream(request({ vodId: "2345678901" }), envWith(), services, "https://worker.example");
+
+    expect(claims).toBe(0);
+    expect(boxCalls).toHaveLength(0);
+    const record = puts[0] as { status: string; reason?: string };
+    expect(record.status).toBe("skipped");
+    expect(record.reason).toBe(SHORT_REASON);
+  });
+
+  test("добавление отвечает пропуском, а не начатым разбором (FR-005)", async () => {
+    const { services } = servicesWith({ video: SHORT_VIDEO });
+
+    const response = await handleAddStream(
+      request({ vodId: "2345678901" }),
+      envWith(),
+      services,
+      "https://worker.example",
+    );
+
+    // Код ответа, а не только поле status: клиент, не читающий тело, иначе
+    // счёл бы пропуск начатой работой.
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { vodId: string; status: string; reason?: string };
+    expect(body.vodId).toBe("2345678901");
+    expect(body.status).toBe("skipped");
+    expect(body.reason).toBe(SHORT_REASON);
+  });
+
+  test("причина в ответе та же, что записана в реестр", async () => {
+    const { services, puts } = servicesWith({ video: SHORT_VIDEO });
+
+    const response = await handleAddStream(
+      request({ vodId: "2345678901" }),
+      envWith(),
+      services,
+      "https://worker.example",
+    );
+
+    const body = (await response.json()) as { reason?: string };
+    expect(body.reason).toBe((puts[0] as { reason?: string }).reason);
+  });
+
+  test("повторный разбор отвечает так же", async () => {
+    const { services } = servicesWith({
+      existing: streamRecord({ status: "skipped", reason: "прежняя причина" }),
+      video: SHORT_VIDEO,
+    });
+
+    const response = await handleReparseStream(
+      "2345678901",
+      new Request("https://x", { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } }),
+      envWith(),
+      services,
+      "https://worker.example",
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { status: string; reason?: string };
+    expect(body.status).toBe("skipped");
+    expect(body.reason).toBe(SHORT_REASON);
+  });
+
+  test("через запуск разбора проходит тот же отказ — правило одно на все пути", async () => {
+    const { services, boxCalls, claims } = servicesWith({ video: SHORT_VIDEO });
+
+    await startStreamIngest("2345678901", "auto", services, "https://worker.example");
+
+    expect(claims).toBe(0);
+    expect(boxCalls).toHaveLength(0);
   });
 });
 

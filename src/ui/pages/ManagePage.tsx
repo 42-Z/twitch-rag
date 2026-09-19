@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
-import { callOwnerApi, TOKEN_HINT, type TokenState } from "../lib/owner.ts";
+import { addStreamOutcome, callOwnerApi, TOKEN_HINT, type TokenState } from "../lib/owner.ts";
 import type { ChannelSummary } from "../lib/registry.ts";
 
 /**
@@ -43,7 +43,7 @@ export function ManagePage({
   const [busy, setBusy] = useState<"channel" | "stream" | "streamer" | undefined>(undefined);
   /** Итог действия помнит, какая форма его вызвала: подпись показывается там же, где нажимали. */
   const [message, setMessage] = useState<
-    { what: "channel" | "stream" | "streamer"; kind: "success" | "error"; text: string } | undefined
+    { what: "channel" | "stream" | "streamer"; kind: "success" | "note" | "error"; text: string } | undefined
   >(undefined);
 
   const allowed = tokenState === "valid";
@@ -56,17 +56,23 @@ export function ManagePage({
     setStreamerInfo(savedStreamerInfo);
   }, [savedStreamerInfo]);
 
+  /**
+   * Подпись об исходе: у действия он свой.
+   *
+   * `note` — не успех и не ошибка. Так помечается исход, при котором владелец
+   * сделал всё правильно, а сервис всё равно ничего не сделал: запись, которую
+   * разбирать нечего. Зелёный цвет утверждал бы, что запись принята.
+   */
   async function submit(
     what: "channel" | "stream" | "streamer",
-    action: () => Promise<unknown>,
-    success: string,
+    action: () => Promise<{ kind: "success" | "note"; text: string }>,
     reset: () => void,
   ): Promise<void> {
     setBusy(what);
     setMessage(undefined);
     try {
-      await action();
-      setMessage({ what, kind: "success", text: success });
+      const outcome = await action();
+      setMessage({ what, kind: outcome.kind, text: outcome.text });
       reset();
       onChanged();
     } catch (error) {
@@ -79,11 +85,13 @@ export function ManagePage({
   /** Подпись об исходе действия — рядом с кнопкой, а не в шапке страницы. */
   function outcome(what: "channel" | "stream" | "streamer"): React.JSX.Element | null {
     if (message === undefined || message.what !== what) return null;
-    return (
-      <p className={message.kind === "error" ? "text-sm text-destructive" : "text-sm text-emerald-600"}>
-        {message.text}
-      </p>
-    );
+    const color =
+      message.kind === "error"
+        ? "text-destructive"
+        : message.kind === "note"
+          ? "text-muted-foreground"
+          : "text-emerald-600";
+    return <p className={`text-sm ${color}`}>{message.text}</p>;
   }
 
   return (
@@ -134,8 +142,10 @@ export function ManagePage({
                 event.preventDefault();
                 void submit(
                   "channel",
-                  () => callOwnerApi("/api/channel", "PUT", adminToken, { login: channelLogin }),
-                  `Канал «${channelLogin}» подключён.`,
+                  async () => {
+                    await callOwnerApi("/api/channel", "PUT", adminToken, { login: channelLogin });
+                    return { kind: "success", text: `Канал «${channelLogin}» подключён.` };
+                  },
                   () => setChannelLogin(""),
                 );
               }}
@@ -178,8 +188,10 @@ export function ManagePage({
                   event.preventDefault();
                   void submit(
                     "streamer",
-                    () => callOwnerApi("/api/streamer", "PUT", adminToken, { info: streamerInfo }),
-                    "Сведения сохранены.",
+                    async () => {
+                      await callOwnerApi("/api/streamer", "PUT", adminToken, { info: streamerInfo });
+                      return { kind: "success", text: "Сведения сохранены." };
+                    },
                     () => undefined,
                   );
                 }}
@@ -221,8 +233,12 @@ export function ManagePage({
                 event.preventDefault();
                 void submit(
                   "stream",
-                  () => callOwnerApi("/api/streams", "POST", adminToken, { url: streamUrl }),
-                  "Запись принята в обработку.",
+                  async () =>
+                    addStreamOutcome(
+                      (await callOwnerApi("/api/streams", "POST", adminToken, {
+                        url: streamUrl,
+                      })) as { status?: string; reason?: string },
+                    ),
                   () => setStreamUrl(""),
                 );
               }}

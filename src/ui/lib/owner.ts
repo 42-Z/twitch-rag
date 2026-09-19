@@ -101,6 +101,25 @@ export async function callOwnerApi(
   return data;
 }
 
+/**
+ * Что показать владельцу после добавления записи.
+ *
+ * Сервис отвечает пропуском, когда разбирать запись нечего — она короче трёх
+ * минут или доступна не всем зрителям. Обещать разбор в этом случае значит
+ * обмануть: владелец пойдёт искать запись в списке разобранных. Пропуск при
+ * этом не ошибка — он сделал всё правильно, — поэтому и вид у подписи особый:
+ * не зелёный и не красный.
+ */
+export function addStreamOutcome(answer: { status?: string; reason?: string }): {
+  kind: "success" | "note";
+  text: string;
+} {
+  if (answer.status === "skipped") {
+    return { kind: "note", text: answer.reason ?? "Запись не будет разобрана." };
+  }
+  return { kind: "success", text: "Запись принята в обработку." };
+}
+
 /** Подпись состояния токена для страницы управления. */
 export const TOKEN_HINT: Record<TokenState, string> = {
   none: "Введите токен, чтобы управлять сервисом.",

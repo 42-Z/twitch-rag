@@ -11,8 +11,8 @@ import type { Services } from "./env.ts";
 import { AppError } from "../shared/errors.ts";
 import { startStreamIngest } from "./routes/streams.ts";
 import { nameDocumentsWithoutNames } from "./naming.ts";
-import { MAX_ATTEMPTS, isStale, type StreamRecord } from "../shared/registry.ts";
-import type { TwitchVideo } from "../shared/twitch.ts";
+import { MAX_ATTEMPTS, isStale, skippedStreamRecord, type StreamRecord } from "../shared/registry.ts";
+import { skipReason, type TwitchVideo } from "../shared/twitch.ts";
 
 /**
  * Отбор одной записи к разбору из списка канала и текущего реестра.
@@ -51,6 +51,36 @@ export function selectNextVideo(
   return candidates.reduce((earliest, video) =>
     video.publishedAtUnix < earliest.publishedAtUnix ? video : earliest,
   );
+}
+
+/**
+ * Записи, которые разбирать нечего, — чтобы пометить их пропущенными до
+ * отбора, а не когда до них дойдёт очередь.
+ *
+ * За один запуск проверки берётся одна запись к разбору, поэтому помеченный
+ * «по очереди» обрывок отнимает час у настоящего эфира: обрывков в архиве
+ * канала набралось восемь, и восемь часов эфиры ждали бы зря.
+ *
+ * Проход смотрит ровно на то, что взял бы в работу сам: записи после
+ * подключения канала (FR-003) и не растущую запись идущего эфира. Прошлые
+ * эфиры в работу не берутся вовсе — их добавляет владелец, — и записывать их
+ * пропущенными значило бы завести в список решения, которых система не
+ * принимала. Растущая запись тоже короче трёх минут в первые минуты эфира, и
+ * пометить её пропущенной значит потерять весь эфир: разобранную запись
+ * автоматика больше не возьмёт.
+ */
+export function unprocessableToSkip(
+  videos: readonly TwitchVideo[],
+  known: ReadonlyMap<string, StreamRecord>,
+  watchFrom: number,
+  liveStreamId?: string,
+): TwitchVideo[] {
+  return videos.filter((video) => {
+    if (known.has(video.vodId)) return false;
+    if (video.publishedAtUnix < watchFrom) return false;
+    if (liveStreamId !== undefined && video.streamId === liveStreamId) return false;
+    return skipReason(video) !== undefined;
+  });
 }
 
 /**
@@ -113,6 +143,17 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
     // нельзя. Сбой этого запроса валит всю проверку — так задумано: принять
     // обрывок за целый эфир хуже, чем пропустить час.
     const liveStreamId = await services.twitch.getLiveStreamId(channel.twitchUserId);
+
+    // Помечается до отбора и после вопроса об идущем эфире: растущая запись
+    // идущего эфира короче трёх минут, и без этого вопроса её пометили бы
+    // пропущенной вместе с обрывками.
+    for (const video of unprocessableToSkip(videos, known, channel.watchFrom, liveStreamId)) {
+      const reason = skipReason(video);
+      if (reason === undefined) continue; // недостижимо: отбор проверяет то же
+      const record = skippedStreamRecord(video, "auto", reason);
+      await services.registry.putStream(record);
+      known.set(record.vodId, record);
+    }
 
     const next = selectNextVideo(videos, known, channel.watchFrom, nowUnix, liveStreamId);
     if (next !== undefined) {

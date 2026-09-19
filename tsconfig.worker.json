@@ -34,6 +34,7 @@
     "src/shared",
     "tests/contract",
     "tests/unit/schedule-select.test.ts",
+    "tests/unit/schedule-skip.test.ts",
     "tests/unit/document-naming.test.ts"
   ],
   "exclude": ["dist", "node_modules"]
