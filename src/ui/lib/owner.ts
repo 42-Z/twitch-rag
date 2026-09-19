@@ -101,6 +101,39 @@ export async function callOwnerApi(
   return data;
 }
 
+/** Разбор начат либо запись не взята вместе с причиной. */
+export type IngestOutcome = { kind: "started" } | { kind: "skipped"; reason: string };
+
+/**
+ * Чем закончился запуск разбора — по ответу сервиса.
+ *
+ * Сервис отвечает пропуском, когда разбирать запись нечего: она короче трёх
+ * минут или доступна не всем зрителям. Пропуск при этом не ошибка — владелец
+ * сделал всё правильно, — но и не работа: обещать её значит обмануть, и
+ * владелец пойдёт искать запись в списке разобранных.
+ *
+ * Ответ разбирается один раз на оба действия: добавление и повторный разбор
+ * запускают одно и то же и отвечают одинаково, и разойдись они — владелец
+ * прочитал бы про одну и ту же запись разное.
+ */
+export function ingestOutcome(answer: { status?: string; reason?: string }): IngestOutcome {
+  if (answer.status === "skipped") {
+    return { kind: "skipped", reason: answer.reason ?? "Запись не будет разобрана." };
+  }
+  return { kind: "started" };
+}
+
+/** Что показать владельцу после добавления записи. */
+export function addStreamOutcome(answer: { status?: string; reason?: string }): {
+  kind: "success" | "note";
+  text: string;
+} {
+  const outcome = ingestOutcome(answer);
+  return outcome.kind === "skipped"
+    ? { kind: "note", text: outcome.reason }
+    : { kind: "success", text: "Запись принята в обработку." };
+}
+
 /** Подпись состояния токена для страницы управления. */
 export const TOKEN_HINT: Record<TokenState, string> = {
   none: "Введите токен, чтобы управлять сервисом.",

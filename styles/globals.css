@@ -1,4 +1,9 @@
-@import "tailwindcss";
+/*
+ * Классы ищутся во всём коде страницы, а не от корня сборки: корень у Vite —
+ * папка `src/ui`, и компоненты из `src/components` без явного указания
+ * остались бы без стилей (https://tailwindcss.com/docs/detecting-classes-in-source-files).
+ */
+@import "tailwindcss" source("../src");
 @import "tw-animate-css";
 
 /*

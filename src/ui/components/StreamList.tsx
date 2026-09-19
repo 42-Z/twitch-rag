@@ -15,12 +15,14 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
 import { StreamActions } from "./StreamActions.tsx";
 import { formatDate, recordLabel } from "../lib/format.ts";
+import type { IngestOutcome } from "../lib/owner.ts";
 import { listStreams, type StreamSummary } from "../lib/registry.ts";
 
 interface StreamListProps {
   onOpen: (vodId: string) => void;
   onDelete?: (vodId: string) => Promise<void>;
-  onReparse?: (vodId: string) => Promise<void>;
+  /** Возвращает исход: запись могла уйти в разбор, а могла и не подлежать ему. */
+  onReparse?: (vodId: string) => Promise<IngestOutcome>;
   /** Растёт при внешнем изменении реестра (после добавления/удаления) — заставляет перечитать список. */
   refreshToken?: number;
 }
@@ -36,6 +38,12 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
    * сейчас и отвергнут по правилу FR-030.
    */
   const [rowError, setRowError] = useState<{ vodId: string; text: string } | undefined>(undefined);
+  /**
+   * Действие прошло, а работы не будет — с причиной. Отдельно от сбоя, потому
+   * что сбоя нет: запись не взяли в разбор по правилу, и показать её
+   * разбираемой значило бы соврать.
+   */
+  const [rowNote, setRowNote] = useState<{ vodId: string; text: string } | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +94,12 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
     return <p className="text-sm text-destructive">{rowError.text}</p>;
   }
 
+  /** Исход действия, при котором работы не будет: причина, а не ошибка. */
+  function noted(vodId: string): React.JSX.Element | null {
+    if (rowNote === undefined || rowNote.vodId !== vodId) return null;
+    return <p className="text-sm text-muted-foreground">{rowNote.text}</p>;
+  }
+
   function actions(stream: StreamSummary): React.JSX.Element {
     return (
       <StreamActions
@@ -93,9 +107,17 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
         onOpen={onOpen}
         {...(onReparse === undefined ? {} : { onReparse })}
         {...(onDelete === undefined ? {} : { onDelete })}
-        onFailed={(vodId, text) => setRowError({ vodId, text })}
+        onFailed={(vodId, text) => {
+          setRowNote(undefined);
+          setRowError({ vodId, text });
+        }}
+        onNote={(vodId, text) => {
+          setRowError(undefined);
+          setRowNote({ vodId, text });
+        }}
         onDone={(vodId, outcome) => {
           setRowError(undefined);
+          setRowNote(undefined);
           setStreams((current) =>
             current === undefined
               ? current
@@ -155,6 +177,7 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
                 </div>
               )}
               {failed(stream.vodId)}
+              {noted(stream.vodId)}
             </li>
           ))}
         </ul>
@@ -183,6 +206,7 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
                   {actions(stream)}
                 </div>
                 {failed(stream.vodId)}
+                {noted(stream.vodId)}
               </li>
             ))}
           </ul>
@@ -205,6 +229,7 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
                   {actions(stream)}
                 </div>
                 {failed(stream.vodId)}
+                {noted(stream.vodId)}
               </li>
             ))}
           </ul>

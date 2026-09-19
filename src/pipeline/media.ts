@@ -30,8 +30,11 @@ export interface Unavailable {
 }
 
 export class MediaUnavailableError extends Error {
-  constructor(readonly reason: Unavailable) {
+  readonly reason: Unavailable;
+
+  constructor(reason: Unavailable) {
     super(reason.message);
+    this.reason = reason;
     this.name = "MediaUnavailableError";
   }
 }

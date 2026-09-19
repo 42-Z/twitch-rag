@@ -1,7 +1,8 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { StreamActions } from "../../src/ui/components/StreamActions.tsx";
 import type { StreamSummary } from "../../src/ui/lib/registry.ts";
+import type { IngestOutcome } from "../../src/ui/lib/owner.ts";
 
 /**
  * Повторный разбор доступен для записи в любом состоянии (FR-028, FR-034).
@@ -31,15 +32,19 @@ function summary(status: StreamSummary["status"], overrides: Partial<StreamSumma
 const noop = (): undefined => undefined;
 const nothing = async (): Promise<void> => undefined;
 
+/** Разбор начат — обычный исход повторного разбора для этих проверок. */
+const started = async (): Promise<IngestOutcome> => ({ kind: "started" });
+
 function render(stream: StreamSummary, props: Partial<Parameters<typeof StreamActions>[0]> = {}): string {
   return renderToStaticMarkup(
     <StreamActions
       stream={stream}
       onOpen={noop}
-      onReparse={nothing}
+      onReparse={started}
       onDelete={nothing}
       onFailed={noop}
       onDone={noop}
+      onNote={noop}
       {...props}
     />,
   );

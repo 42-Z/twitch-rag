@@ -16,7 +16,13 @@
 - Cloudflare: https://developers.cloudflare.com/llms.txt
 - Twitch: https://dev.twitch.tv/docs
 - Upstash: https://upstash.com/llms.txt
-- Bun: https://bun.com/llms.txt
+- Node.js: https://nodejs.org/llms.txt
+- npm: https://docs.npmjs.com/cli
+- Vitest: https://v4.vitest.dev/llms.txt
+- Vite: https://vite.dev/llms.txt
+- esbuild: https://esbuild.github.io/api/
+- Tailwind CSS: https://tailwindcss.com/docs
+- Playwright: https://playwright.dev/docs/intro
 - Openrouter: https://openrouter.ai/llms.txt
 
 ## Описание проекта
@@ -32,111 +38,55 @@
 
 ## Запуск
 
-Default to using Bun instead of Node.js.
-
-- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
-
-## APIs
-
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
-
-## Testing
-
-Use `bun test` to run tests.
-
-```ts#index.test.ts
-import { test, expect } from "bun:test";
-
-test("hello world", () => {
-  expect(1).toBe(1);
-});
-```
-
-## Frontend
-
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
-
-Server:
-
-```ts#index.ts
-import index from "./index.html"
-
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
-
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
+Среда — Node.js (не ниже 24.12) и npm. Зависимости ставятся по замку npm:
 
 ```sh
-bun --hot ./index.ts
+npm ci
 ```
 
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+- `npm test` — все проверки Vitest: набор логики под Node и набор Worker'а в его среде
+- `npx vitest run --project logic` — только логика и разметка страницы, без подъёма среды Worker'а
+- `npx vitest run --project workers` — только Worker: запросы в сам Worker, привязки из `wrangler.jsonc`
+- `npm run test:e2e` — страница в настоящем браузере (Playwright и проверочный набор Wrangler)
+- `npm run test:integration` — сквозной разбор на боевом сервисе: тратит деньги, только по согласию
+- `npm run typecheck` — типы всех трёх настроек TypeScript
+- `npm run build` — сборка страницы в `dist` (Vite)
+- `npm run build:pipeline` — сборка программы конвейера в `pipeline.mjs` (esbuild)
+- `npm run dev:worker` — Worker локально (`wrangler dev`)
+
+Скрипты запускаются через `npm run`, а не `node --run`: переменные, загруженные
+`--env-file`, в скрипт, запущенный `node --run`, не передаются.
+
+Автозагрузки `.env` у Node нет. Страница получает значения при сборке: Vite берёт
+из `.env` и из окружения только переменные с приставкой `VITE_`
+(`VITE_REGISTRY_URL`, `VITE_REGISTRY_READONLY_TOKEN`) и закладывает их в
+`import.meta.env`. `process.env` в коде страницы не работает — он превращается в
+пустоту без ошибки. Без этих значений сборка падает. Секреты Worker'а локально
+читает `wrangler dev` из `.env`, на сервере они ставятся `wrangler secret put`.
+
+Настройки TypeScript:
+
+- `tsconfig.json` — страница и проверки логики: разрешение модулей как у сборщика,
+  псевдоним `@/`
+- `tsconfig.worker.json` — Worker и конвейер: разрешение как у Node, только
+  относительные пути с расширением `.ts`, без псевдонимов и без синтаксиса,
+  который Node не умеет срезать (`enum`, свойства в параметрах конструктора и т. п.)
+- `tests/worker/tsconfig.json` — проверки Worker'а: модули `cloudflare:test` и
+  `cloudflare:workers`
+
+Проверки Worker'а (`tests/worker`) исполняются внутри его среды через
+`@cloudflare/vitest-plugin`; внешние сервисы подменяются перехватом сети
+(`@msw/cloudflare`), секреты — проверочными значениями из
+`vitest.workers.config.ts`, а боевые из `.env` туда не попадают. Vitest —
+четвёртой версии: плагин Cloudflare совместимость с пятой не заявляет.
+
+Стили страницы: Tailwind ищет классы от папки, указанной в
+`@import "tailwindcss" source(...)` в `styles/globals.css`. Корень сборки Vite —
+`src/ui`, и без этого указания компоненты из `src/components` остаются без
+стилей, а сборка проходит молча.
+
+npm запускает установочные скрипты только у пакетов, разрешённых в
+`allowScripts` в `package.json` (`npm install-scripts approve <пакет>`).
 
 ## Структура
 
@@ -183,7 +133,11 @@ src/ui/          страница
   lib/             чтение реестра из браузера, вызовы владельца, адреса
 
 src/components/ui/, src/lib/, src/hooks/   shadcn/ui и вспомогательное
-build.ts         сборка страницы
+styles/          стили страницы (Tailwind)
+vite.config.ts   сборка страницы
+vitest.config.ts проверки: набор логики и ссылка на набор Worker'а
+vitest.workers.config.ts  набор Worker'а в его среде
+tests/           unit, contract, integration — логика; worker — Worker в его среде; e2e — браузер
 wrangler.jsonc   Worker: маршруты, хранилища, расписание, Workflows
 specs/           спецификации, планы и задачи по SpecKit
 .specify/        скиллы и скрипты SpecKit
@@ -196,9 +150,12 @@ specs/           спецификации, планы и задачи по SpecK
 обновляется и без этого в бою не меняется:
 
 ```
-bun build src/pipeline/main.ts --target=node --outfile=pipeline.mjs
+npm run build:pipeline
 box files write /workspace/home/pipeline.mjs
 ```
+
+Сборка — одним файлом со всеми зависимостями внутри: в машине нет папки
+зависимостей, есть только Node.
 
 ## Контроль версий
 

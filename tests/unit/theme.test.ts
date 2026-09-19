@@ -1,4 +1,5 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
+import { readFile } from "node:fs/promises";
 
 /**
  * Тёмная тема включается сама, по предпочтению браузера.
@@ -8,7 +9,7 @@ import { test, expect, describe } from "bun:test";
  * зависеть от `prefers-color-scheme` и ждёт класса, которого никто не ставит.
  * Снаружи это выглядит как «тёмная тема не работает».
  */
-const css = await Bun.file(new URL("../../styles/globals.css", import.meta.url)).text();
+const css = await readFile(new URL("../../styles/globals.css", import.meta.url), "utf8");
 
 describe("тёмная тема", () => {
   test("токены тёмной темы заданы под предпочтение браузера", () => {

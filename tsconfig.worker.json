@@ -1,20 +1,23 @@
 {
-  // Cloudflare Workers: изолят V8 без файловой системы и без Node-глобалей.
+  // Ветка Node: код Worker и конвейера, а также проверки, которые тянут окружение
+  // Worker. Разрешение модулей — как у Node (`nodenext`): только относительные пути
+  // с расширением, без псевдонимов — Node не читает tsconfig и псевдонимов не знает
+  // (https://nodejs.org/docs/latest/api/typescript.md).
+  //
   // DOM-типы сюда не подключаются намеренно — их наличие маскирует обращения
-  // к тому, чего в изоляте нет.
+  // к тому, чего в изоляте нет. Типы Node — потому что Worker включён с
+  // `nodejs_compat`, а конвейер работает под Node.
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",
-    "module": "Preserve",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "moduleDetection": "force",
     "allowJs": false,
-    // "bun-types/test" — только объявление модуля `bun:test`, без глобальных
-    // Node/DOM-подобных типов из bun-types/globals.d.ts, которые
-    // конфликтовали бы с типами Workers.
-    "types": ["@cloudflare/workers-types", "bun-types/test"],
+    "types": ["@cloudflare/workers-types", "node"],
 
-    "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
@@ -22,18 +25,16 @@
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    "noImplicitOverride": true
   },
 
   "include": [
     "src/worker",
     "src/shared",
+    "src/pipeline",
     "tests/contract",
     "tests/unit/schedule-select.test.ts",
+    "tests/unit/schedule-skip.test.ts",
     "tests/unit/document-naming.test.ts"
   ],
   "exclude": ["dist", "node_modules"]

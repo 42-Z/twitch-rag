@@ -11,6 +11,7 @@
 // прямо велит брать подходящий вход при развёртывании на особых площадках.
 import { Redis } from "@upstash/redis/cloudflare";
 import type { Chapter } from "./categories.ts";
+import type { TwitchVideo } from "./twitch.ts";
 import { upstreamError } from "./errors.ts";
 
 export type StreamStatus = "processing" | "ready" | "skipped" | "failed";
@@ -63,6 +64,33 @@ export interface StreamRecord {
   processedAt?: number;
   /** Сколько раз документу пытались выработать имя, не перечитывая эфир. */
   nameAttempts?: number;
+}
+
+/**
+ * Запись, которую не берут в работу: разбора не было и не будет, причина
+ * обязательна. Собирается в одном месте, потому что пишут такие записи двое —
+ * часовая проверка, помечающая то, что разбирать нечего, и запуск разбора,
+ * отказавший по записи. Расхождение между ними владелец увидел бы как две
+ * разные причины у одного и того же случая.
+ */
+export function skippedStreamRecord(
+  video: TwitchVideo,
+  source: StreamRecord["source"],
+  reason: string,
+): StreamRecord {
+  return {
+    vodId: video.vodId,
+    status: "skipped",
+    title: video.title,
+    url: video.url,
+    publishedAt: video.publishedAt,
+    publishedAtUnix: video.publishedAtUnix,
+    durationSeconds: video.durationSeconds,
+    categories: [],
+    source,
+    reason,
+    attempts: 0,
+  };
 }
 
 /** Больше трёх неудач подряд — запись уходит в пропущенные, а не крутится вечно. */

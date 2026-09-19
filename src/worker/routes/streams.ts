@@ -6,7 +6,7 @@
 
 import { z } from "zod";
 import { AppError } from "../../shared/errors.ts";
-import { MAX_ATTEMPTS, isStale, type StreamRecord } from "../../shared/registry.ts";
+import { MAX_ATTEMPTS, isStale, skippedStreamRecord, type StreamRecord } from "../../shared/registry.ts";
 import { skipReason } from "../../shared/twitch.ts";
 import type { Env, Services } from "../env.ts";
 import { parseJson, requireAdminToken } from "./owner.ts";
@@ -62,7 +62,30 @@ export async function handleAddStream(
     return Response.json({ vodId, status: "processing" }, { status: 202 });
   }
 
-  await startStreamIngest(vodId, "manual", services, callbackBaseUrl);
+  return respondToIngest(vodId, await startStreamIngest(vodId, "manual", services, callbackBaseUrl));
+}
+
+/**
+ * Чем закончился запуск разбора.
+ *
+ * Разбор идёт не всегда: запись, которую разбирать нечего, помечается
+ * пропущенной с причиной, и вызывающий обязан узнать об этом — иначе он
+ * ответит владельцу, что работа начата, тогда как её не будет.
+ */
+export type IngestOutcome = { status: "processing" } | { status: "skipped"; reason: string };
+
+/**
+ * Ответ на запуск разбора по его исходу.
+ *
+ * Код ответа, а не только поле `status`, отличает начатую работу от пропуска:
+ * клиент, не читающий тело, иначе счёл бы пропуск начатым разбором. Ошибкой
+ * пропуск не объявляется — владелец сделал всё правильно, а запись просто не
+ * подлежит разбору.
+ */
+function respondToIngest(vodId: string, outcome: IngestOutcome): Response {
+  if (outcome.status === "skipped") {
+    return Response.json({ vodId, status: "skipped", reason: outcome.reason }, { status: 200 });
+  }
   return Response.json({ vodId, status: "processing" }, { status: 202 });
 }
 
@@ -76,7 +99,7 @@ export async function startStreamIngest(
   services: Services,
   callbackBaseUrl: string,
   previousAttempts = 0,
-): Promise<void> {
+): Promise<IngestOutcome> {
   // Последняя защита перед запуском: она не зависит от того, кто позвал —
   // расписание, ручное добавление или путь, которого ещё нет. Раньше проверка
   // стояла только у вызывающих, и однажды разбор одной записи пошёл двумя
@@ -92,20 +115,8 @@ export async function startStreamIngest(
   const video = await services.twitch.getVideo(vodId);
   const reason = skipReason(video);
   if (reason !== undefined) {
-    await services.registry.putStream({
-      vodId,
-      status: "skipped",
-      title: video.title,
-      url: video.url,
-      publishedAt: video.publishedAt,
-      publishedAtUnix: video.publishedAtUnix,
-      durationSeconds: video.durationSeconds,
-      categories: [],
-      source,
-      reason,
-      attempts: 0,
-    });
-    return;
+    await services.registry.putStream(skippedStreamRecord(video, source, reason));
+    return { status: "skipped", reason };
   }
 
   // Занятие записи — вплотную к запуску и одним действием хранилища:
@@ -155,6 +166,8 @@ export async function startStreamIngest(
     });
     throw error;
   }
+
+  return { status: "processing" };
 }
 
 // --- GET /api/streams/:vodId/document (FR-031) ---
@@ -240,6 +253,8 @@ export async function handleReparseStream(
     throw new AppError("reparse_running", "Разбор этой трансляции уже идёт.");
   }
 
-  await startStreamIngest(vodId, existing.source, services, callbackBaseUrl, REPARSE_ATTEMPTS);
-  return Response.json({ vodId, status: "processing" }, { status: 202 });
+  // Исход тот же, что у добавления: повторный разбор идёт тем же путём, и для
+  // записи, которую разбирать нечего, ответ «разбор начат» был бы неправдой.
+  const outcome = await startStreamIngest(vodId, existing.source, services, callbackBaseUrl, REPARSE_ATTEMPTS);
+  return respondToIngest(vodId, outcome);
 }

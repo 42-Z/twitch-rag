@@ -12,8 +12,8 @@
  * Поэтому числа здесь приводятся через `Number`, а поля читаются по одному.
  */
 
-const REGISTRY_URL = process.env.BUN_PUBLIC_REGISTRY_URL ?? "";
-const READONLY_TOKEN = process.env.BUN_PUBLIC_REGISTRY_READONLY_TOKEN ?? "";
+const REGISTRY_URL = import.meta.env.VITE_REGISTRY_URL ?? "";
+const READONLY_TOKEN = import.meta.env.VITE_REGISTRY_READONLY_TOKEN ?? "";
 
 export interface Chapter {
   title: string;

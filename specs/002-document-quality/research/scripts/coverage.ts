@@ -17,12 +17,14 @@
  * документа. Подробнее — в [results.md](../results.md).
  *
  * Запуск:
- *   bun specs/002-document-quality/research/scripts/coverage.ts --transcript 2875806701-1200-5400
+ *   node specs/002-document-quality/research/scripts/coverage.ts --transcript 2875806701-1200-5400
  */
 
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-const dataDir = path.resolve(import.meta.dir, "..", "data");
+const dataDir = path.resolve(import.meta.dirname, "..", "data");
 
 function arg(name: string, fallback?: string): string {
   const index = process.argv.indexOf(`--${name}`);
@@ -38,8 +40,8 @@ const label = arg("transcript");
 const partMinutes = Number(arg("part-minutes", "0"));
 const runLabel = partMinutes === 0 ? label : `${label}-part${partMinutes}`;
 
-const lines = (await Bun.file(path.join(dataDir, `transcript-${label}.txt`)).text()).split("\n");
-const report = (await Bun.file(path.join(dataDir, `transcript-${label}.json`)).json()) as {
+const lines = (await readFile(path.join(dataDir, `transcript-${label}.txt`), "utf8")).split("\n");
+const report = JSON.parse(await readFile(path.join(dataDir, `transcript-${label}.json`), "utf8")) as {
   section: { from: number; to: number };
 };
 
@@ -91,12 +93,12 @@ console.log(`конкретики в участке: ${items.size} (числа �
 console.log(`участок: ${partMinutes === 0 ? "весь" : `${partMinutes} мин`}\n`);
 
 for (const variant of variants) {
-  const file = Bun.file(path.join(dataDir, `document-${runLabel}-${variant}.json`));
-  if (!(await file.exists())) {
+  const file = path.join(dataDir, `document-${runLabel}-${variant}.json`);
+  if (!existsSync(file)) {
     console.log(`${variant}: нет файла`);
     continue;
   }
-  const document = (await file.json()) as { sections: Array<{ text: string; title: string }> };
+  const document = JSON.parse(await readFile(file, "utf8")) as { sections: Array<{ text: string; title: string }> };
   const written = document.sections.map((section) => `${section.title}\n${section.text}`).join("\n").toLowerCase();
 
   const missing: string[] = [];

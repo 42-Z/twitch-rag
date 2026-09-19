@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { documentSectionTitles, renameDocumentHeader } from "../../src/shared/documents.ts";
 import { nameDocumentsWithoutNames } from "../../src/worker/naming.ts";
 import type { Services } from "../../src/worker/env.ts";
