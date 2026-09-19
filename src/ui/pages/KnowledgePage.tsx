@@ -11,6 +11,7 @@ import { StreamList } from "../components/StreamList.tsx";
 import { DocumentView } from "../components/DocumentView.tsx";
 import { navigate } from "../lib/router.tsx";
 import { knowledgeDocumentPath } from "../lib/routes.ts";
+import { ingestOutcome, type IngestOutcome } from "../lib/owner.ts";
 
 interface KnowledgePageProps {
   /** Идентификатор открытого документа, если адрес указывает на него. */
@@ -35,25 +36,40 @@ export function KnowledgePage({
   }
 
   /**
-   * Управляющее действие над трансляцией. Отказ приходит телом контракта, и
-   * текст из него показывается человеку: у отказа может быть своя причина —
-   * «разбор уже идёт», — которую по коду состояния не угадать.
+   * Отказ приходит телом контракта, и текст из него показывается человеку: у
+   * отказа может быть своя причина — «разбор уже идёт», — которую по коду
+   * состояния не угадать.
    */
-  async function act(vodId: string, action: "remove" | "reparse"): Promise<void> {
-    const path =
-      action === "remove"
-        ? `/api/streams/${encodeURIComponent(vodId)}`
-        : `/api/streams/${encodeURIComponent(vodId)}/reparse`;
-    const response = await fetch(path, {
-      method: action === "remove" ? "DELETE" : "POST",
+  async function refuse(response: Response, fallback: string): Promise<never> {
+    const data = (await response.json().catch(() => ({}))) as { error?: { message: string } };
+    throw new Error(data.error?.message ?? `${fallback} (код ${response.status}).`);
+  }
+
+  async function remove(vodId: string): Promise<void> {
+    const response = await fetch(`/api/streams/${encodeURIComponent(vodId)}`, {
+      method: "DELETE",
       headers: { Authorization: `Bearer ${adminToken}` },
     });
-    if (!response.ok) {
-      const data = (await response.json().catch(() => ({}))) as { error?: { message: string } };
-      const fallback = action === "remove" ? "Удаление не прошло" : "Повторный разбор не запустился";
-      throw new Error(data.error?.message ?? `${fallback} (код ${response.status}).`);
-    }
+    if (!response.ok) await refuse(response, "Удаление не прошло");
     onChanged();
+  }
+
+  /**
+   * Повторный разбор отвечает не только «начат»: запись, которую разбирать
+   * нечего, он пропускает — и тогда разбора не будет, хотя запрос прошёл.
+   * Исход возвращается списку: показать такую запись разбираемой значило бы
+   * обещать работу, которой сервис не начал.
+   */
+  async function reparse(vodId: string): Promise<IngestOutcome> {
+    const response = await fetch(`/api/streams/${encodeURIComponent(vodId)}/reparse`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    if (!response.ok) await refuse(response, "Повторный разбор не запустился");
+    const answer = (await response.json().catch(() => ({}))) as { status?: string; reason?: string };
+    const outcome = ingestOutcome(answer);
+    if (outcome.kind === "started") onChanged();
+    return outcome;
   }
 
   return (
@@ -61,8 +77,8 @@ export function KnowledgePage({
       onOpen={(id) => navigate(knowledgeDocumentPath(id))}
       {...(canManage
         ? {
-            onDelete: (id: string) => act(id, "remove"),
-            onReparse: (id: string) => act(id, "reparse"),
+            onDelete: (id: string) => remove(id),
+            onReparse: (id: string) => reparse(id),
           }
         : {})}
       refreshToken={refreshToken}

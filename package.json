@@ -10,7 +10,8 @@
     "deploy": "bun run build && wrangler deploy",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260915.1",
+    "@playwright/test": "^1.63.0",
     "@types/bun": "latest",
     "@types/react": "^19",
     "@types/react-dom": "^19",
