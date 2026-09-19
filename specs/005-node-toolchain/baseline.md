@@ -48,19 +48,22 @@
 TypeScript, `.gitignore`, `.env.example`, `CLAUDE.md`, `README.md` не найдено; `bun.lock`,
 `bunfig.toml`, `build.ts`, `bun-env.d.ts` удалены.
 
-## Что поменять в настройках сборки Cloudflare
+## Настройки сборки Cloudflare — применены
 
-Делается владельцем в панели Cloudflare (Workers → twitch-rag → Settings → Build) до
-слияния в основную ветку — иначе первая же сборка упадёт:
+2026-09-19 через API сборок Cloudflare, в обоих триггерах (ветки и `main`):
 
-| Где | Было | Стало |
-|-----|------|-------|
-| Команда сборки | `bun run build` | `npm run build` |
-| Переменная сборки | `BUN_PUBLIC_REGISTRY_URL` | `VITE_REGISTRY_URL` (значение то же) |
-| Переменная сборки | `BUN_PUBLIC_REGISTRY_READONLY_TOKEN` | `VITE_REGISTRY_READONLY_TOKEN` (значение то же) |
+- команда сборки: `bun run build` → `npm run build`;
+- добавлены `VITE_REGISTRY_URL` и `VITE_REGISTRY_READONLY_TOKEN` (значения прежних).
 
-Команды развёртывания не меняются. Версия Node берётся из `.node-version` (24); npm
-сборочная среда выбирает сама по `package-lock.json`.
+Прежние `BUN_PUBLIC_*` и `BUN_VERSION` оставлены намеренно: пока `main` собирается
+по старому коду, ему нужны и Bun, и прежние имена. **После слияния в `main` их удалить.**
 
-После выпуска программу конвейера надо пересобрать и переложить в машину:
-`npm run build:pipeline`, затем `box files write /workspace/home/pipeline.mjs`.
+Сборка ветки после этого прошла: npm 10.9.2 в сборочной среде поставил зависимости по
+`package-lock.json`, страница собралась, версия Worker уложена.
+
+## Программа конвейера в боксе — обновлена
+
+Прежняя копия лежит там же как `/workspace/home/pipeline.prev.mjs` — для отката:
+`box exec "cp /workspace/home/pipeline.prev.mjs /workspace/home/pipeline.mjs"`.
+Новая (23 621 байт) запускается под Node бокса (v25.9.0), хеш совпадает с локальной
+сборкой. Сквозной разбор записи на ней — приёмочная проверка после слияния.
