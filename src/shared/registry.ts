@@ -61,6 +61,8 @@ export interface StreamRecord {
   attempts: number;
   costUsd?: number;
   processedAt?: number;
+  /** Сколько раз документу пытались выработать имя, не перечитывая эфир. */
+  nameAttempts?: number;
 }
 
 /** Больше трёх неудач подряд — запись уходит в пропущенные, а не крутится вечно. */
@@ -386,6 +388,7 @@ function toStreamRecord(raw: Record<string, unknown>): StreamRecord {
     ...defined("docPath", optionalString(raw["docPath"])),
     ...defined("reason", optionalString(raw["reason"])),
     ...defined("costUsd", optionalNumber(raw["costUsd"])),
+    ...defined("nameAttempts", optionalNumber(raw["nameAttempts"])),
     ...defined("processedAt", optionalNumber(raw["processedAt"])),
   };
 }

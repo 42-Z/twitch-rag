@@ -18,6 +18,16 @@ import type { StreamRecord } from "../shared/registry.ts";
 import { documentName } from "../shared/document-name.ts";
 import { documentSectionTitles, renameDocumentHeader } from "../shared/documents.ts";
 
+/**
+ * Сколько раз пробовать, прежде чем оставить запись без имени.
+ *
+ * Именование — обращение к модели, то есть деньги. Без предела запись, у
+ * которой имя не выходит по причине, которая сама не пройдёт, платила бы за
+ * попытку каждый час и бессрочно. Три попытки — тот же предел, что у разбора,
+ * и по той же причине.
+ */
+const MAX_NAME_ATTEMPTS = 3;
+
 export async function nameDocumentsWithoutNames(
   records: Iterable<StreamRecord>,
   services: Services,
@@ -25,13 +35,21 @@ export async function nameDocumentsWithoutNames(
   let named = 0;
   for (const record of records) {
     if (record.status !== "ready" || documentName(record) !== "") continue;
+    const tried = record.nameAttempts ?? 0;
+    if (tried >= MAX_NAME_ATTEMPTS) continue;
     try {
       await nameOne(record, services);
       named += 1;
     } catch (error) {
       // Неудача именования не повод валить проверку: без имени запись
-      // остаётся различимой по дате, а следующая проверка попробует снова.
+      // остаётся различимой по дате, а следующая проверка попробует снова —
+      // но не бесконечно.
       console.error(`[имя ${record.vodId}] ${error instanceof Error ? error.message : String(error)}`);
+      await services.registry
+        .patchStream(record.vodId, { nameAttempts: tried + 1 })
+        .catch((patchError: unknown) =>
+          console.error(`[имя ${record.vodId}] счёт попыток не сохранился: ${String(patchError)}`),
+        );
     }
   }
   return named;

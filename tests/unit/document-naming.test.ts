@@ -160,6 +160,30 @@ describe("имена документам, разобранным до их по
     expect(captured.saved).toHaveLength(0);
   });
 
+  test("попытки именования считаются, чтобы не платить за них вечно", async () => {
+    // Имя вырабатывается обращением к модели, то есть за деньги. Запись, у
+    // которой имя не выходит по причине, которая сама не пройдёт, иначе
+    // платила бы за попытку каждый час и бессрочно.
+    const captured = empty();
+
+    const named = await nameDocumentsWithoutNames([record("1")], servicesWith(captured, "1"));
+
+    expect(named).toBe(0);
+    expect(captured.patched[0]?.patch["nameAttempts"]).toBe(1);
+  });
+
+  test("исчерпавшему попытки имя больше не вырабатывают", async () => {
+    const captured = empty();
+
+    const named = await nameDocumentsWithoutNames(
+      [record("1", { nameAttempts: 3 }), record("2")],
+      servicesWith(captured),
+    );
+
+    expect(named).toBe(1);
+    expect(captured.patched.map((item) => item.vodId)).toEqual(["2"]);
+  });
+
   test("сбой на одной записи не мешает остальным", async () => {
     const captured = empty();
 
@@ -169,6 +193,9 @@ describe("имена документам, разобранным до их по
     );
 
     expect(named).toBe(1);
-    expect(captured.patched.map((item) => item.vodId)).toEqual(["2"]);
+    // Сбойной достаётся только счёт попытки, имени — нет.
+    expect(captured.patched.map((item) => item.vodId)).toEqual(["1", "2"]);
+    expect(captured.patched[0]?.patch).toEqual({ nameAttempts: 1 });
+    expect(captured.patched[1]?.patch["docTitle"]).toBe("Выборы, донаты и удостоверение");
   });
 });
