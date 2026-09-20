@@ -104,6 +104,7 @@ export function ApiPage(): React.JSX.Element {
       "score": 0.73570734,
       "category": "Minecraft",
       "stream": {
+        "streamId": "2873255697",
         "vodId": "2873255697",
         "title": "Спор о вайпкодинге и сервер на Mineflayer",
         "publishedAt": "2026-09-13T16:32:54.000Z",
@@ -132,8 +133,8 @@ export function ApiPage(): React.JSX.Element {
     },
     {
       method: "GET",
-      path: "/api/streams/{vodId}/document",
-      text: "Документ целиком в разметке Markdown: имя документа, заголовки разделов со временем и категорией.",
+      path: "/api/streams/{streamId}/document",
+      text: "Документ целиком в разметке Markdown: имя документа, заголовки разделов со временем и категорией. Эфир длиннее шести часов разбирается по частям, у части идентификатор с суффиксом: 2873255697-p2. В найденном разделе streamId — запись, которой он принадлежит, а vodId — номер записи на Twitch.",
       request: `curl ${origin}/api/streams/2873255697/document`,
       response: `# Спор о вайпкодинге и сервер на Mineflayer
 
