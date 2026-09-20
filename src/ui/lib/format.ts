@@ -18,9 +18,21 @@ export function formatDate(iso: string): string {
  * Имя документа показывается, когда оно есть; когда его нет — дата эфира.
  * Заголовок с площадки не показывается и здесь (FR-027), а дата различает
  * записи не хуже: одинаковых эфиров в один день у канала не бывает.
+ *
+ * У части эфира дата одна на все части, и без пометки две строки за один
+ * день читались бы как сбой: к дате добавляется «часть N из M». У части с
+ * именем пометка уже стоит в самом имени (`withPartLabel`) — повторять её
+ * незачем.
  */
-export function recordLabel(stream: { docTitle?: string; publishedAt: string }): string {
-  return stream.docTitle !== undefined && stream.docTitle !== ""
-    ? stream.docTitle
-    : formatDate(stream.publishedAt);
+export function recordLabel(stream: {
+  docTitle?: string;
+  publishedAt: string;
+  part?: number;
+  partCount?: number;
+}): string {
+  if (stream.docTitle !== undefined && stream.docTitle !== "") return stream.docTitle;
+  const date = formatDate(stream.publishedAt);
+  return stream.part !== undefined && stream.partCount !== undefined
+    ? `${date} · часть ${stream.part} из ${stream.partCount}`
+    : date;
 }

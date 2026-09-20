@@ -11,8 +11,8 @@
 
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { readMediaInfo, MediaUnavailableError, classifyFailure } from "./media.ts";
-import { cutAudio } from "./segment.ts";
+import { readMediaInfo, MediaUnavailableError, classifyFailure, clipChapters } from "./media.ts";
+import { cutAudio, absoluteChunks } from "./segment.ts";
 import { Publisher, audioKey } from "./publish.ts";
 import { parseArgs } from "./args.ts";
 
@@ -40,19 +40,28 @@ async function main(): Promise<void> {
 
   try {
     const info = await readMediaInfo(args.url);
-    const chunks = await cutAudio(args.url, workDir);
+    // Отрезок эфира: прежняя программа сервиса границ не передаёт — тогда весь эфир.
+    const fromSeconds = args.fromSeconds ?? 0;
+    const toSeconds = Math.min(args.toSeconds ?? info.durationSeconds, info.durationSeconds);
+    if (fromSeconds >= toSeconds) {
+      throw new Error(`отрезок ${fromSeconds}–${toSeconds} с пуст: в записи ${info.durationSeconds} с`);
+    }
+    // Нарезка считает время от начала отрезка; ниже по течению время везде
+    // абсолютное, от начала эфира, и помнить, от чего отсчитана метка, не нужно.
+    const chunks = absoluteChunks(await cutAudio(args.url, workDir, { fromSeconds, toSeconds }), fromSeconds);
     if (chunks.length === 0) throw new Error("нарезка не дала ни одного куска");
 
     await publisher.uploadChunks(args.streamId, workDir, chunks);
     await publisher.notifyReady(args.callbackUrl, secret, {
       streamId: args.streamId,
       vodId: args.vodId,
-      partStartSeconds: 0,
+      partStartSeconds: fromSeconds,
       runId,
       title: info.title,
       publishedAt: info.publishedAt,
-      durationSeconds: info.durationSeconds,
-      categories: info.chapters,
+      // Длина отрезка, а не всего эфира; главы — только его, в абсолютном времени.
+      durationSeconds: toSeconds - fromSeconds,
+      categories: clipChapters(info.chapters, fromSeconds, toSeconds),
       chunks: chunks.map((chunk) => ({
         index: chunk.index,
         key: audioKey(args.streamId, chunk.index),

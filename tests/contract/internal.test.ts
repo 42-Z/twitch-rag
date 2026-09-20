@@ -319,3 +319,141 @@ describe("POST /api/internal/ingest-ready", () => {
     }
   });
 });
+
+describe("сигнал готовности части эфира", () => {
+  const VOD = "2873255697";
+  const RUN = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+  const BROADCAST_START = "2026-09-13T16:32:54Z";
+  const PART_START = 21600;
+
+  function partBody(overrides: Record<string, unknown> = {}) {
+    return body({
+      streamId: `${VOD}-p2`,
+      partStartSeconds: PART_START,
+      durationSeconds: 10800,
+      chunks: [
+        { index: 0, key: `audio/${VOD}-p2/chunk-0000.m4a`, offsetSeconds: PART_START, durationSeconds: 1200 },
+      ],
+      ...overrides,
+    });
+  }
+
+  /** Окружение, запоминающее задание, с которым создан разбор. */
+  function capturingEnv(): { env: Env; created: Array<{ id: string; params: Record<string, unknown> }> } {
+    const created: Array<{ id: string; params: Record<string, unknown> }> = [];
+    const env = {
+      INGEST_SECRET: "shared-secret",
+      INGEST: {
+        create: async (input: { id: string; params: Record<string, unknown> }) => {
+          created.push(input);
+          return { id: input.id };
+        },
+        get: async () => {
+          throw new Error("not found");
+        },
+      },
+    } as unknown as Env;
+    return { env, created };
+  }
+
+  /** Запись части, которую положил запуск разбора: в ней и лежит общее число частей. */
+  function servicesWithPartRecord(captured: Captured, exists = true): Services {
+    return {
+      registry: {
+        getStream: async (id: string) =>
+          exists && id === `${VOD}-p2`
+            ? { streamId: id, vodId: VOD, part: 2, partCount: 3, partStartSeconds: PART_START, source: "auto", attempts: 1 }
+            : undefined,
+        putStream: async (record: Record<string, unknown>) => {
+          captured.put.push(record);
+        },
+        patchStream: async () => undefined,
+      },
+    } as unknown as Services;
+  }
+
+  test("разбор называется по части, а задание несёт границы и время части", async () => {
+    const { env, created } = capturingEnv();
+    const captured: Captured = { patched: [], put: [] };
+
+    const response = await handleIngestReady(request(partBody()), env, servicesWithPartRecord(captured));
+
+    expect(response.status).toBe(202);
+    expect(created[0]?.id).toBe(`ingest-${VOD}-p2-${RUN}`);
+    const partPublishedAt = new Date(Date.parse(BROADCAST_START) + PART_START * 1000).toISOString();
+    expect(created[0]?.params).toMatchObject({
+      streamId: `${VOD}-p2`,
+      vodId: VOD,
+      partStartSeconds: PART_START,
+      part: { index: 2, count: 3 },
+      publishedAt: partPublishedAt,
+      durationSeconds: 10800,
+    });
+  });
+
+  test("запись части в реестре: поля части и время начала части", async () => {
+    const { env } = capturingEnv();
+    const captured: Captured = { patched: [], put: [] };
+
+    await handleIngestReady(request(partBody()), env, servicesWithPartRecord(captured));
+
+    const expectedUnix = Math.floor(Date.parse(BROADCAST_START) / 1000) + PART_START;
+    expect(captured.put[0]).toMatchObject({
+      streamId: `${VOD}-p2`,
+      vodId: VOD,
+      part: 2,
+      partCount: 3,
+      partStartSeconds: PART_START,
+      publishedAtUnix: expectedUnix,
+      durationSeconds: 10800,
+    });
+  });
+
+  test("у неделёной записи полей части нет", async () => {
+    const { env, created } = capturingEnv();
+    const captured: Captured = { patched: [], put: [] };
+
+    await handleIngestReady(request(body()), env, servicesWithPartRecord(captured));
+
+    expect(created[0]?.params["part"]).toBeUndefined();
+    expect(created[0]?.params["partStartSeconds"]).toBe(0);
+    expect("part" in (captured.put[0] ?? {})).toBe(false);
+  });
+
+  test("идентификатор, чей номер записи не совпал с vodId, отвергается", async () => {
+    const { env } = capturingEnv();
+    const captured: Captured = { patched: [], put: [] };
+    await expect(
+      handleIngestReady(request(partBody({ streamId: "999-p2" })), env, servicesWithPartRecord(captured)),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+
+  test("идентификатор не по образцу отвергается", async () => {
+    const { env } = capturingEnv();
+    const captured: Captured = { patched: [], put: [] };
+    await expect(
+      handleIngestReady(request(partBody({ streamId: `${VOD}-p0` })), env, servicesWithPartRecord(captured)),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+
+  test("часть, которой нет в реестре, отвергается", async () => {
+    const { env, created } = capturingEnv();
+    const captured: Captured = { patched: [], put: [] };
+    await expect(
+      handleIngestReady(request(partBody()), env, servicesWithPartRecord(captured, false)),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+    expect(created).toHaveLength(0);
+  });
+
+  test("отказ бокса по части помечает запись этой части", async () => {
+    const { env } = capturingEnv();
+    const captured: Captured = { patched: [], put: [] };
+    const services = fakeServices(captured);
+    await handleIngestReady(
+      request({ vodId: VOD, streamId: `${VOD}-p2`, failed: true, code: "download_failed", message: "не удалось" }),
+      env,
+      services,
+    );
+    expect(captured.patched.map((item) => item.vodId)).toEqual([`${VOD}-p2`]);
+  });
+});

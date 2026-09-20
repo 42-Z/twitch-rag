@@ -1,5 +1,5 @@
 import { test, expect, describe } from "vitest";
-import { selectNextVideo, retireExhausted, runScheduledCheck } from "../../src/worker/schedule.ts";
+import { selectNextVideo, retireExhausted, runScheduledCheck, knownVideoIds } from "../../src/worker/schedule.ts";
 import { MAX_ATTEMPTS, type StreamRecord } from "../../src/shared/registry.ts";
 import type { TwitchVideo } from "../../src/shared/twitch.ts";
 
@@ -40,7 +40,7 @@ describe("отбор записи к автоматическому разбор
   test("новая запись после подключения канала берётся", () => {
     const videos = [video("1", 1900000000)];
     const next = selectNextVideo(videos, new Map(), 1800000000, NOW);
-    expect(next?.vodId).toBe("1");
+    expect(next?.video.vodId).toBe("1");
   });
 
   test("запись раньше подключения канала не берётся автоматически (FR-003)", () => {
@@ -70,13 +70,13 @@ describe("отбор записи к автоматическому разбор
   test("брошенная processing (дольше суток) берётся заново (FR-034)", () => {
     const videos = [video("1", 1900000000)];
     const known = new Map([["1", record("1", "processing", { processedAt: NOW - 25 * 60 * 60 })]]);
-    expect(selectNextVideo(videos, known, 1800000000, NOW)?.vodId).toBe("1");
+    expect(selectNextVideo(videos, known, 1800000000, NOW)?.video.vodId).toBe("1");
   });
 
   test("failed берётся снова, пока не исчерпаны попытки", () => {
     const videos = [video("1", 1900000000)];
     const known = new Map([["1", record("1", "failed", { attempts: MAX_ATTEMPTS - 1 })]]);
-    expect(selectNextVideo(videos, known, 1800000000, NOW)?.vodId).toBe("1");
+    expect(selectNextVideo(videos, known, 1800000000, NOW)?.video.vodId).toBe("1");
   });
 
   test("failed с исчерпанными попытками не берётся", () => {
@@ -87,7 +87,7 @@ describe("отбор записи к автоматическому разбор
 
   test("из нескольких кандидатов берётся самая ранняя запись", () => {
     const videos = [video("2", 1950000000), video("1", 1900000000), video("3", 1980000000)];
-    expect(selectNextVideo(videos, new Map(), 1800000000, NOW)?.vodId).toBe("1");
+    expect(selectNextVideo(videos, new Map(), 1800000000, NOW)?.video.vodId).toBe("1");
   });
 
   test("без кандидатов возвращается undefined — отсутствие новых записей не ошибка", () => {
@@ -107,17 +107,91 @@ describe("запись идущего эфира", () => {
 
   test("запись законченного эфира берётся, пока идёт другой", () => {
     const videos = [video("1", 1900000000, "эфир-прошлый")];
-    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, "эфир-сейчас")?.vodId).toBe("1");
+    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, "эфир-сейчас")?.video.vodId).toBe("1");
   });
 
   test("из растущей и законченной берётся законченная", () => {
     const videos = [video("2", 1950000000, "эфир-сейчас"), video("1", 1900000000, "эфир-прошлый")];
-    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, "эфир-сейчас")?.vodId).toBe("1");
+    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, "эфир-сейчас")?.video.vodId).toBe("1");
   });
 
   test("канал не в эфире — берётся самая свежая запись", () => {
     const videos = [video("1", 1900000000, "эфир-прошлый")];
-    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, undefined)?.vodId).toBe("1");
+    expect(selectNextVideo(videos, new Map(), 1800000000, NOW, undefined)?.video.vodId).toBe("1");
+  });
+});
+
+describe("отбор части длинного эфира", () => {
+  const H = 3600;
+  /** Эфир длительностью в часы; по умолчанию — 7 часов, то есть две части. */
+  const long = (vodId: string, publishedAtUnix: number, hours = 7): TwitchVideo => ({
+    ...video(vodId, publishedAtUnix),
+    durationSeconds: hours * H,
+  });
+  const part = (vodId: string, index: number, status: StreamRecord["status"], overrides: Partial<StreamRecord> = {}) =>
+    record(vodId, status, { streamId: `${vodId}-p${index}`, part: index, partCount: 2, ...overrides });
+  const known = (...records: StreamRecord[]) => new Map(records.map((item) => [item.streamId, item]));
+
+  test("эфир длиннее порога без записей берётся первой частью", () => {
+    const next = selectNextVideo([long("1", 1900000000)], new Map(), 1800000000, NOW);
+    expect(next?.video.vodId).toBe("1");
+    expect(next?.part).toMatchObject({ index: 1, count: 2, startSeconds: 0 });
+  });
+
+  test("первая часть разобрана — берётся вторая", () => {
+    const next = selectNextVideo([long("1", 1900000000)], known(part("1", 1, "ready")), 1800000000, NOW);
+    expect(next?.part).toMatchObject({ index: 2, count: 2 });
+    expect(next?.part.startSeconds).toBe(Math.floor((7 * H) / 2));
+  });
+
+  test("обе части разобраны — брать нечего", () => {
+    const both = known(part("1", 1, "ready"), part("1", 2, "ready"));
+    expect(selectNextVideo([long("1", 1900000000)], both, 1800000000, NOW)).toBeUndefined();
+  });
+
+  test("неделёная запись эфира, ставшего делимым, автоматикой не трогается (FR-015)", () => {
+    for (const status of ["ready", "failed", "processing", "skipped"] as const) {
+      const legacy = known(record("1", status, { attempts: 1, processedAt: NOW }));
+      expect(selectNextVideo([long("1", 1900000000)], legacy, 1800000000, NOW)).toBeUndefined();
+    }
+  });
+
+  test("эфир ровно в шесть часов — одна запись без суффикса", () => {
+    const next = selectNextVideo([long("1", 1900000000, 6)], new Map(), 1800000000, NOW);
+    expect(next?.part).toMatchObject({ index: 1, count: 1, startSeconds: 0, endSeconds: 6 * H });
+  });
+
+  test("из двух эфиров раньше берётся тот, чья часть начинается раньше", () => {
+    // Вторая часть старого эфира начинается через 3,5 часа после его начала —
+    // раньше, чем начнётся следующий эфир.
+    const older = long("1", 1900000000);
+    const newer = long("2", 1900000000 + 5 * H);
+    const next = selectNextVideo([newer, older], known(part("1", 1, "ready")), 1800000000, NOW);
+    expect(next?.video.vodId).toBe("1");
+    expect(next?.part.index).toBe(2);
+  });
+
+  test("правило подключения канала смотрит на эфир, а не на часть", () => {
+    // Эфир начался до подключения, вторая часть — после: автоматически не берётся.
+    const before = long("1", 1800000000 - H);
+    expect(selectNextVideo([before], new Map(), 1800000000, NOW)).toBeUndefined();
+  });
+
+  test("идущий эфир не берётся", () => {
+    const live = { ...long("1", 1900000000), streamId: "эфир-сейчас" };
+    expect(selectNextVideo([live], new Map(), 1800000000, NOW, "эфир-сейчас")).toBeUndefined();
+  });
+
+  test("сорвавшаяся часть берётся снова, пока есть попытки", () => {
+    const retry = known(part("1", 1, "ready"), part("1", 2, "failed", { attempts: MAX_ATTEMPTS - 1 }));
+    expect(selectNextVideo([long("1", 1900000000)], retry, 1800000000, NOW)?.part.index).toBe(2);
+    const spent = known(part("1", 1, "ready"), part("1", 2, "failed", { attempts: MAX_ATTEMPTS }));
+    expect(selectNextVideo([long("1", 1900000000)], spent, 1800000000, NOW)).toBeUndefined();
+  });
+
+  test("номера записей площадки собираются и по частям, и по целым записям", () => {
+    const all = known(part("1", 1, "ready"), part("1", 2, "ready"), record("2", "ready"));
+    expect([...knownVideoIds(all)].sort()).toEqual(["1", "2"]);
   });
 });
 

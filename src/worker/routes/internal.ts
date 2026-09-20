@@ -187,14 +187,32 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
 
   const existing = await services.registry.getStream(streamId);
 
+  // Часть эфира: её запись положил запуск разбора, и общее число частей лежит
+  // в ней — бокс его не знает. Нет записи — сигнал не от нашего запуска.
+  const partStartSeconds = requirePartStart(payload.partStartSeconds);
+  const partNumber = parseStreamId(streamId).part;
+  let part: { index: number; count: number } | undefined;
+  if (partNumber !== undefined) {
+    if (existing?.partCount === undefined) {
+      throw new AppError("invalid_input", "Такой части эфира в реестре нет.");
+    }
+    part = { index: partNumber, count: existing.partCount };
+  }
+
+  // Время части — время эфира плюс её начало: части одного эфира встают в
+  // индексе рядом и по порядку.
+  const publishedAtUnix = Math.floor(new Date(payload.publishedAt).getTime() / 1000) + partStartSeconds;
+  const publishedAt = partStartSeconds === 0 ? payload.publishedAt : new Date(publishedAtUnix * 1000).toISOString();
+
   // Заголовок из сигнала бокса в разбор не передаётся: он не участвует ни в
   // документе, ни в имени (FR-027) и остаётся служебным полем реестра.
   const params: IngestParams = {
     streamId,
     vodId,
-    partStartSeconds: 0,
+    partStartSeconds,
+    ...(part === undefined ? {} : { part }),
     url: `https://www.twitch.tv/videos/${vodId}`,
-    publishedAt: payload.publishedAt,
+    publishedAt,
     durationSeconds: payload.durationSeconds,
     categories: payload.categories,
     chunks: payload.chunks,
@@ -223,10 +241,11 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
     status: "processing",
     title: payload.title,
     url: `https://www.twitch.tv/videos/${vodId}`,
-    publishedAt: payload.publishedAt,
-    publishedAtUnix: Math.floor(new Date(payload.publishedAt).getTime() / 1000),
+    publishedAt,
+    publishedAtUnix,
     durationSeconds: payload.durationSeconds,
     categories: payload.categories,
+    ...(part === undefined ? {} : { part: part.index, partCount: part.count, partStartSeconds }),
     source: existing?.source ?? "manual",
     // Попытка здесь не считается: её уже зачёл запуск разбора
     // (`startStreamIngest`), а сигнал бокса — это тот же самый заход, а не
@@ -252,6 +271,15 @@ function identify(body: { vodId: string; streamId?: string }): { streamId: strin
     throw new AppError("invalid_input", "Идентификатор записи в сигнале не совпадает с номером записи.");
   }
   return { streamId, vodId: parsed.vodId };
+}
+
+/** Начало отрезка: у сигнала прежней программы поля нет — это неделёная запись. */
+function requirePartStart(value: unknown): number {
+  if (value === undefined) return 0;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new AppError("invalid_input", "В сигнале прогона неверное начало отрезка.");
+  }
+  return value;
 }
 
 function nowUnix(): number {

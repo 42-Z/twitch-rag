@@ -23,6 +23,7 @@ function summary(status: StreamSummary["status"], overrides: Partial<StreamSumma
     title: "РАССКАЗЫВАЮ ИСТОРИИ И ЧЁ-ТА ДЕЛАЮ // !донат !приватка",
     url: "https://www.twitch.tv/videos/2875806701",
     publishedAt: "2026-09-16T16:54:29Z",
+    publishedAtUnix: 1789577669,
     durationSeconds: 13757,
     categories: [],
     sectionCount: 16,

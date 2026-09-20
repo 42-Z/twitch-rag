@@ -15,7 +15,7 @@
 
 import type { Services } from "./env.ts";
 import type { StreamRecord } from "../shared/registry.ts";
-import { documentName } from "../shared/document-name.ts";
+import { documentName, withPartLabel } from "../shared/document-name.ts";
 import { documentSectionTitles, renameDocumentHeader } from "../shared/documents.ts";
 
 /**
@@ -72,11 +72,18 @@ async function nameOne(record: StreamRecord, services: Services): Promise<void> 
     throw new Error("в документе нет ни одного раздела — имени взяться неоткуда.");
   }
 
-  const name = await services.models.composeDocumentName({
+  const generated = await services.models.composeDocumentName({
     publishedAt: record.publishedAt,
     sectionTitles,
     sessionId: record.streamId,
   });
+  // Имя части называет часть — так же, как при разборе (FR-005).
+  const name = withPartLabel(
+    generated,
+    record.part !== undefined && record.partCount !== undefined
+      ? { index: record.part, count: record.partCount }
+      : undefined,
+  );
 
   await services.documents.save(record.streamId, renameDocumentHeader(markdown, name));
   await services.knowledge.renameStream(record.streamId, name);

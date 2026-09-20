@@ -49,4 +49,20 @@ describe("чтение списка из реестра", () => {
     expect(streams[0]?.vodId).toBe("1");
     expect(streams[0]?.status).toBe("ready");
   });
+
+  test("запись части читается с номером, числом частей и началом", async () => {
+    stubRegistry([
+      {
+        result: [
+          "vodId", "1", "status", "processing", "part", "2", "partCount", "3",
+          "partStartSeconds", "21600", "publishedAtUnix", "1789599269", "publishedAt", "2026-09-16T22:54:29Z",
+        ],
+      },
+    ]);
+
+    const streams = await listStreams();
+
+    expect(streams[0]).toMatchObject({ streamId: "1", vodId: "1", part: 2, partCount: 3, partStartSeconds: 21600 });
+    expect(streams[0]?.publishedAtUnix).toBe(1789599269);
+  });
 });

@@ -2,9 +2,14 @@
  * Разбор записи: распознать → составить документ → дать имя → проиндексировать.
  *
  * Оформлено шагами с независимыми повторами, а не одним длинным вызовом:
- * на семичасовой эфир приходится больше сорока кусков, и один вызов не прошёл
- * бы ни по числу внешних обращений, ни по процессорному времени. При сбое
- * переигрывается шаг, а не весь эфир.
+ * у шестичасовой части (наибольшей из возможных) восемнадцать кусков по
+ * двадцать минут, и один вызов не прошёл бы по процессорному времени. При
+ * сбое переигрывается шаг, а не весь эфир. Число внешних обращений на весь
+ * прогон ограничено пятьюдесятью — отсюда и деление длинного эфира на части
+ * (`shared/stream-parts.ts`): разбирается одна часть, а не весь эфир.
+ *
+ * Время внутри части абсолютное, от начала эфира: метки кусков приходят из
+ * конвейера уже такими, и Worker их не сдвигает.
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
@@ -12,7 +17,8 @@ import type { Env, IngestParams, Services } from "./env.ts";
 import { createServices } from "./env.ts";
 import { shiftSegments, prevailingLanguage, formatDuration } from "../shared/time.ts";
 import { renderTranscript } from "../shared/openrouter.ts";
-import { planDocumentParts, assignCategories, uniqueCategories } from "../shared/categories.ts";
+import { planDocumentParts, assignCategories, uniqueCategories, findCoverageGaps } from "../shared/categories.ts";
+import { withPartLabel } from "../shared/document-name.ts";
 import { normalizeSections, type ParsedSection } from "../shared/sections.ts";
 import { buildChunks } from "../shared/chunks.ts";
 import { renderDocumentHeader, Documents } from "../shared/documents.ts";
@@ -35,8 +41,6 @@ import { composePart } from "../shared/document-parts.ts";
 const CHARS_PER_PART = 30000;
 /** Сколько кусков идёт в одно обращение за эмбеддингами. */
 const EMBED_BATCH = 32;
-/** Разрыв больше этого означает пропущенный участок эфира, а не паузу в речи. */
-const MAX_COVERAGE_GAP_SECONDS = 300;
 
 /** Текст распознанного куска: живёт от распознавания до конца разбора. */
 const transcriptKey = (streamId: string, index: number): string =>
@@ -193,7 +197,12 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // В каждом проходе модель получает расшифровку целиком, но пишет только
     // свой участок: иначе отсылки внутри эфира теряют смысл.
     const partCount = Math.max(1, Math.ceil(transcriptChars / CHARS_PER_PART));
-    const parts = planDocumentParts(params.durationSeconds, params.categories, partCount);
+    // Отрезок эфира, который разбирает этот прогон: у части — не от нуля.
+    const range = {
+      startSeconds: params.partStartSeconds,
+      endSeconds: params.partStartSeconds + params.durationSeconds,
+    };
+    const parts = planDocumentParts(range, params.categories, partCount);
 
     const written: ParsedSection[] = [];
     for (const [index, part] of parts.entries()) {
@@ -227,7 +236,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       throw new Error("после приведения не осталось ни одного раздела");
     }
 
-    const gaps = findCoverageGaps(sections, params.durationSeconds);
+    const gaps = findCoverageGaps(sections, range);
     if (gaps.length > 0) {
       // Разрыв во времени означает пропущенный кусок эфира. Документ всё
       // равно сохраняется — терять разобранное из-за дыры нельзя, — но
@@ -240,11 +249,13 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // документа, и в метаданных кусков, и в реестре, поэтому вырабатывается
     // до индексации. Заголовок с площадки в запрос не идёт вовсе (FR-027).
     const docTitle = await step.do("выработать имя документа", async () => {
-      return await services.models.composeDocumentName({
+      const name = await services.models.composeDocumentName({
         publishedAt: params.publishedAt,
         sectionTitles: sections.map((section) => section.title),
         sessionId: params.streamId,
       });
+      // Имя части называет часть (FR-005): метка ставится здесь, в коде.
+      return withPartLabel(name, params.part);
     });
 
     // --- индексация ---
@@ -387,25 +398,3 @@ function formatRange(section: ParsedSection): string {
   const range = `${clock(section.startSeconds)} — ${clock(section.endSeconds)}`;
   return section.category === "" ? range : `${range} · ${section.category}`;
 }
-
-/** Участки эфира, не покрытые ни одним разделом (FR-040). */
-export function findCoverageGaps(
-  sections: readonly ParsedSection[],
-  durationSeconds: number,
-): Array<{ from: number; to: number }> {
-  const ordered = [...sections].sort((a, b) => a.startSeconds - b.startSeconds);
-  const gaps: Array<{ from: number; to: number }> = [];
-  let cursor = 0;
-
-  for (const section of ordered) {
-    if (section.startSeconds - cursor > MAX_COVERAGE_GAP_SECONDS) {
-      gaps.push({ from: cursor, to: section.startSeconds });
-    }
-    cursor = Math.max(cursor, section.endSeconds);
-  }
-  if (durationSeconds - cursor > MAX_COVERAGE_GAP_SECONDS) {
-    gaps.push({ from: cursor, to: durationSeconds });
-  }
-  return gaps;
-}
-

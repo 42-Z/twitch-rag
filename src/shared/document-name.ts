@@ -20,3 +20,17 @@ export interface NamedStream {
 export function documentName(stream: NamedStream): string {
   return stream.docTitle ?? "";
 }
+
+/**
+ * Имя документа части эфира: к имени по содержанию дописывается, какая это
+ * часть (FR-005). Без этого два документа за один день неразличимы.
+ *
+ * Метка ставится в коде, а не просится у модели: имя обязано её нести, а
+ * полагаться на послушность ответа для этого нельзя. У неделёной записи имя
+ * не меняется; уже помеченное — не помечается повторно.
+ */
+export function withPartLabel(name: string, part: { index: number; count: number } | undefined): string {
+  if (part === undefined) return name;
+  const label = `(часть ${part.index} из ${part.count})`;
+  return name.endsWith(label) ? name : `${name} ${label}`;
+}
