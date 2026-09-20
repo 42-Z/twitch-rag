@@ -41,7 +41,7 @@ describe("идентификаторы известных записей", () =>
     stubRedis([btoa("2345678901")]);
 
     return registry()
-      .knownVodIds()
+      .knownStreamIds()
       .then((ids) => {
         expect(typeof ids[0]).toBe("string");
         expect(ids).toEqual(["2345678901"]);
@@ -52,9 +52,46 @@ describe("идентификаторы известных записей", () =>
     stubRedis([btoa("abc"), btoa("2345678901"), btoa("")]);
 
     return registry()
-      .knownVodIds()
+      .knownStreamIds()
       .then((ids) => {
         expect(ids).toEqual(["abc", "2345678901", ""]);
       });
+  });
+});
+
+describe("запись части эфира", () => {
+  const hash = (pairs: Record<string, string>) => Object.entries(pairs).flatMap(([key, value]) => [btoa(key), btoa(value)]);
+
+  test("поля части читаются обратно, а идентификатор берётся из ключа", async () => {
+    stubRedis(
+      hash({
+        vodId: "2345678901",
+        status: "ready",
+        part: "2",
+        partCount: "3",
+        partStartSeconds: "21600",
+        attempts: "1",
+      }),
+    );
+
+    const record = await registry().getStream("2345678901-p2");
+
+    expect(record?.streamId).toBe("2345678901-p2");
+    expect(record?.vodId).toBe("2345678901");
+    expect(record?.part).toBe(2);
+    expect(record?.partCount).toBe(3);
+    expect(record?.partStartSeconds).toBe(21600);
+  });
+
+  test("у неделёной записи полей части нет, а идентификатор равен ключу", async () => {
+    stubRedis(hash({ status: "ready", attempts: "1" }));
+
+    const record = await registry().getStream("2345678901");
+
+    expect(record?.streamId).toBe("2345678901");
+    expect(record?.vodId).toBe("2345678901");
+    expect("part" in (record ?? {})).toBe(false);
+    expect("partCount" in (record ?? {})).toBe(false);
+    expect("partStartSeconds" in (record ?? {})).toBe(false);
   });
 });

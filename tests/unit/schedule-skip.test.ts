@@ -33,6 +33,7 @@ const known = (entries: Array<[string, Partial<StreamRecord>]> = []): Map<string
     entries.map(([vodId, overrides]) => [
       vodId,
       {
+        streamId: vodId,
         vodId,
         status: "ready" as const,
         title: `Стрим ${vodId}`,
@@ -101,7 +102,7 @@ function servicesWith(videos: TwitchVideo[], options: { liveStreamId?: string } 
         watchFrom: WATCH_FROM,
         addedAt: WATCH_FROM,
       }),
-      knownVodIds: async () => [],
+      knownStreamIds: async () => [],
       getStream: async () => undefined,
       patchStream: async () => undefined,
       putStream: async (record: StreamRecord) => {
@@ -116,8 +117,8 @@ function servicesWith(videos: TwitchVideo[], options: { liveStreamId?: string } 
       getVideo: async (vodId: string) => videos.find((v) => v.vodId === vodId)!,
     },
     box: {
-      startIngest: async (input: { vodId: string }) => {
-        boxCalls.push(input.vodId);
+      startIngest: async (input: { streamId: string }) => {
+        boxCalls.push(input.streamId);
       },
     },
     documents: {},

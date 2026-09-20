@@ -22,6 +22,9 @@ export interface Chapter {
 }
 
 export interface StreamSummary {
+  /** Запись реестра: ключ адресов и действий. У части эфира — `<vodId>-p<номер>`. */
+  streamId: string;
+  /** Номер записи на площадке. */
   vodId: string;
   status: "processing" | "ready" | "skipped" | "failed";
   /** Заголовок с площадки: служебное поле, показывается только у неразобранного. */
@@ -30,10 +33,18 @@ export interface StreamSummary {
   docTitle?: string;
   url: string;
   publishedAt: string;
+  /** Время начала записи (у части — время эфира плюс начало части). */
+  publishedAtUnix: number;
   durationSeconds: number;
   categories: Chapter[];
   sectionCount: number;
   reason?: string;
+  /** Номер части эфира с единицы. Только у части. */
+  part?: number;
+  /** Всего частей у эфира. Только у части. */
+  partCount?: number;
+  /** Начало части от начала эфира, секунды. Только у части. */
+  partStartSeconds?: number;
 }
 
 export interface ChannelSummary {
@@ -115,14 +126,16 @@ export function fieldsToMap(fields: readonly string[]): Map<string, string> {
   return map;
 }
 
-export function toSummary(fields: string[]): StreamSummary | undefined {
+export function toSummary(fields: string[], streamId: string): StreamSummary | undefined {
+  // Пустой хеш — записи нет: ключ уже удалён, а в списке остался член индекса.
+  if (fields.length === 0) return undefined;
   const map = fieldsToMap(fields);
-  const vodId = map.get("vodId");
-  if (vodId === undefined) return undefined;
 
   const status = map.get("status") ?? "failed";
   return {
-    vodId,
+    streamId,
+    // У записей, разобранных до деления на части, номер записи площадки и есть ключ.
+    vodId: map.get("vodId") ?? streamId,
     status: status === "processing" || status === "ready" || status === "skipped" || status === "failed"
       ? status
       : "failed",
@@ -130,11 +143,36 @@ export function toSummary(fields: string[]): StreamSummary | undefined {
     ...(map.get("docTitle") === undefined || map.get("docTitle") === "" ? {} : { docTitle: map.get("docTitle") }),
     url: map.get("url") ?? "",
     publishedAt: map.get("publishedAt") ?? "",
+    publishedAtUnix: Number(map.get("publishedAtUnix") ?? 0),
     durationSeconds: Number(map.get("durationSeconds") ?? 0),
     categories: toChapters(map.get("categories")),
     sectionCount: Number(map.get("sectionCount") ?? 0),
     ...(map.get("reason") === undefined || map.get("reason") === "" ? {} : { reason: map.get("reason") }),
+    ...optionalNumberField("part", map.get("part")),
+    ...optionalNumberField("partCount", map.get("partCount")),
+    ...optionalNumberField("partStartSeconds", map.get("partStartSeconds")),
   };
+}
+
+function optionalNumberField<K extends string>(key: K, value: string | undefined): Record<K, number> | Record<string, never> {
+  if (value === undefined || value === "" || !Number.isFinite(Number(value))) return {};
+  return { [key]: Number(value) } as Record<K, number>;
+}
+
+/**
+ * Порядок списка: эфиры от новых к старым, части внутри эфира по номеру.
+ *
+ * Индекс читается от новых к старым, и вторая часть эфира стояла бы выше
+ * первой (FR-011). Эфир опознаётся по номеру записи площадки и упорядочивается
+ * по началу эфира — время части минус её начало от начала эфира.
+ */
+export function orderForList(streams: readonly StreamSummary[]): StreamSummary[] {
+  const broadcastStart = (stream: StreamSummary): number => stream.publishedAtUnix - (stream.partStartSeconds ?? 0);
+  return [...streams].sort((a, b) => {
+    const byBroadcast = broadcastStart(b) - broadcastStart(a);
+    if (byBroadcast !== 0) return byBroadcast;
+    return (a.part ?? 0) - (b.part ?? 0);
+  });
 }
 
 /** Все известные трансляции, свежие первыми, разобранные и пропущенные вместе. */
@@ -144,7 +182,11 @@ export async function listStreams(): Promise<StreamSummary[]> {
 
   const results = await redisPipeline<string[]>(ids.map((id) => ["HGETALL", `stream:${id}`]));
 
-  return results.map(toSummary).filter((summary): summary is StreamSummary => summary !== undefined);
+  return orderForList(
+    results
+      .map((fields, position) => toSummary(fields, String(ids[position])))
+      .filter((summary): summary is StreamSummary => summary !== undefined),
+  );
 }
 
 export async function getChannel(): Promise<ChannelSummary | undefined> {

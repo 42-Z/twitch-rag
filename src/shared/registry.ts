@@ -34,6 +34,13 @@ export interface ChannelRecord {
 }
 
 export interface StreamRecord {
+  /**
+   * Идентификатор записи: ключ реестра, имя документа, префикс векторов.
+   * У неделёного эфира равен `vodId`, у части — `<vodId>-p<номер>`
+   * (`stream-id.ts`). В хеше отдельным полем не хранится: он и есть ключ.
+   */
+  streamId: string;
+  /** Номер записи на площадке — только для обращений к ней и ссылок на момент эфира. */
   vodId: string;
   status: StreamStatus;
   /**
@@ -64,6 +71,12 @@ export interface StreamRecord {
   processedAt?: number;
   /** Сколько раз документу пытались выработать имя, не перечитывая эфир. */
   nameAttempts?: number;
+  /** Номер части эфира с единицы. Только у части. */
+  part?: number;
+  /** Всего частей у эфира. Только у части. */
+  partCount?: number;
+  /** Начало части от начала эфира, секунды. Только у части. */
+  partStartSeconds?: number;
 }
 
 /**
@@ -79,6 +92,7 @@ export function skippedStreamRecord(
   reason: string,
 ): StreamRecord {
   return {
+    streamId: video.vodId,
     vodId: video.vodId,
     status: "skipped",
     title: video.title,
@@ -102,7 +116,7 @@ const CHANNEL_KEY = "channel";
 const INDEX_KEY = "streams:index";
 const TOKEN_KEY = "twitch:token";
 
-const streamKey = (vodId: string) => `stream:${vodId}`;
+const streamKey = (streamId: string) => `stream:${streamId}`;
 
 export interface RegistryConfig {
   url: string;
@@ -173,10 +187,10 @@ export class Registry {
 
   // --- трансляции ---
 
-  async getStream(vodId: string): Promise<StreamRecord | undefined> {
-    const raw = await this.call(() => this.redis.hgetall<Record<string, unknown>>(streamKey(vodId)));
+  async getStream(streamId: string): Promise<StreamRecord | undefined> {
+    const raw = await this.call(() => this.redis.hgetall<Record<string, unknown>>(streamKey(streamId)));
     if (raw === null || Object.keys(raw).length === 0) return undefined;
-    return toStreamRecord(raw);
+    return toStreamRecord(raw, streamId);
   }
 
   /**
@@ -196,9 +210,9 @@ export class Registry {
    * Гонка двух одновременных добавлений одной новой записи здесь не закрыта —
    * ущерба от неё нет, оба запуска идут по пустому месту.
    */
-  async claimForIngest(vodId: string, nowUnix: number): Promise<boolean> {
+  async claimForIngest(streamId: string, nowUnix: number): Promise<boolean> {
     const claimed = await this.call(() =>
-      this.redis.eval(CLAIM_SCRIPT, [streamKey(vodId)], [nowUnix, STALE_PROCESSING_SECONDS]),
+      this.redis.eval(CLAIM_SCRIPT, [streamKey(streamId)], [nowUnix, STALE_PROCESSING_SECONDS]),
     );
     return Number(claimed) === 1;
   }
@@ -222,6 +236,9 @@ export class Registry {
     };
     for (const [key, value] of Object.entries({
       docTitle: record.docTitle,
+      part: record.part,
+      partCount: record.partCount,
+      partStartSeconds: record.partStartSeconds,
       language: record.language,
       sectionCount: record.sectionCount,
       chunkCount: record.chunkCount,
@@ -236,27 +253,28 @@ export class Registry {
 
     await this.call(async () => {
       const transaction = this.redis.multi();
-      transaction.hset(streamKey(record.vodId), stored);
-      transaction.zadd(INDEX_KEY, { score: record.publishedAtUnix, member: record.vodId });
+      transaction.hset(streamKey(record.streamId), stored);
+      transaction.zadd(INDEX_KEY, { score: record.publishedAtUnix, member: record.streamId });
       await transaction.exec();
     });
   }
 
-  async patchStream(vodId: string, patch: Partial<StreamRecord>): Promise<void> {
+  async patchStream(streamId: string, patch: Partial<StreamRecord>): Promise<void> {
     const stored: Record<string, string | number> = {};
     for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined) continue;
+      // Идентификатор — ключ записи, в хеше его нет.
+      if (value === undefined || key === "streamId") continue;
       stored[key] = key === "categories" ? JSON.stringify(value) : (value as string | number);
     }
     if (Object.keys(stored).length === 0) return;
-    await this.call(() => this.redis.hset(streamKey(vodId), stored));
+    await this.call(() => this.redis.hset(streamKey(streamId), stored));
   }
 
-  async removeStream(vodId: string): Promise<void> {
+  async removeStream(streamId: string): Promise<void> {
     await this.call(async () => {
       const transaction = this.redis.multi();
-      transaction.del(streamKey(vodId));
-      transaction.zrem(INDEX_KEY, vodId);
+      transaction.del(streamKey(streamId));
+      transaction.zrem(INDEX_KEY, streamId);
       await transaction.exec();
     });
   }
@@ -271,7 +289,7 @@ export class Registry {
    * проверка «эту запись уже брали» не срабатывала бы никогда, и обход архива
    * каждый раз шёл бы до конца вместо остановки на первой известной записи.
    */
-  async knownVodIds(): Promise<string[]> {
+  async knownStreamIds(): Promise<string[]> {
     const ids = await this.call(() => this.redis.zrange<unknown[]>(INDEX_KEY, 0, -1));
     return ids.map((id) => String(id));
   }
@@ -395,10 +413,12 @@ function optionalNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function toStreamRecord(raw: Record<string, unknown>): StreamRecord {
+function toStreamRecord(raw: Record<string, unknown>, streamId: string): StreamRecord {
   const status = asString(raw["status"]);
   return {
-    vodId: asString(raw["vodId"]),
+    streamId,
+    // У записей, разобранных до деления на части, номер записи площадки и есть ключ.
+    vodId: asString(raw["vodId"]) || streamId,
     status: isStatus(status) ? status : "failed",
     title: asString(raw["title"]),
     url: asString(raw["url"]),
@@ -417,6 +437,9 @@ function toStreamRecord(raw: Record<string, unknown>): StreamRecord {
     ...defined("reason", optionalString(raw["reason"])),
     ...defined("costUsd", optionalNumber(raw["costUsd"])),
     ...defined("nameAttempts", optionalNumber(raw["nameAttempts"])),
+    ...defined("part", optionalNumber(raw["part"])),
+    ...defined("partCount", optionalNumber(raw["partCount"])),
+    ...defined("partStartSeconds", optionalNumber(raw["partStartSeconds"])),
     ...defined("processedAt", optionalNumber(raw["processedAt"])),
   };
 }

@@ -23,6 +23,7 @@ import {
 import { handleSetChannel, handleSetStreamer } from "./routes/channel.ts";
 import { requireAdminToken } from "./routes/owner.ts";
 import { runScheduledCheck } from "./schedule.ts";
+import { TEMPORARY_PREFIXES } from "./temporary.ts";
 
 export { StreamIngestWorkflow } from "./workflow.ts";
 
@@ -81,8 +82,8 @@ const ROUTES: Route[] = [
 
   {
     method: "GET",
-    pattern: "/api/streams/:vodId/document",
-    handler: (_request, env, params) => handleGetDocument(params.vodId ?? "", createServices(env)),
+    pattern: "/api/streams/:streamId/document",
+    handler: (_request, env, params) => handleGetDocument(params.streamId ?? "", createServices(env)),
   },
 
   {
@@ -93,16 +94,16 @@ const ROUTES: Route[] = [
 
   {
     method: "POST",
-    pattern: "/api/streams/:vodId/reparse",
+    pattern: "/api/streams/:streamId/reparse",
     handler: (request, env, params) =>
-      handleReparseStream(params.vodId ?? "", request, env, createServices(env), originOf(request)),
+      handleReparseStream(params.streamId ?? "", request, env, createServices(env), originOf(request)),
   },
 
   {
     method: "DELETE",
-    pattern: "/api/streams/:vodId",
+    pattern: "/api/streams/:streamId",
     handler: (request, env, params) =>
-      handleDeleteStream(params.vodId ?? "", request, env, createServices(env)),
+      handleDeleteStream(params.streamId ?? "", request, env, createServices(env)),
   },
 
   {
@@ -138,9 +139,6 @@ async function readJson(request: Request): Promise<unknown> {
 
 /** Объекты старше суток не могут принадлежать активному разбору — он длится минуты. */
 const STALE_AUDIO_SECONDS = 24 * 60 * 60;
-
-/** Временное при разборе: куски аудио и текст расшифровки. */
-const TEMPORARY_PREFIXES = ["audio/", "transcript/"] as const;
 
 async function cleanupStaleAudio(env: Env): Promise<void> {
   const cutoff = Date.now() - STALE_AUDIO_SECONDS * 1000;

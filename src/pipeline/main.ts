@@ -11,30 +11,10 @@
 
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { readMediaInfo, MediaUnavailableError, classifyFailure } from "./media.ts";
-import { cutAudio } from "./segment.ts";
+import { readMediaInfo, MediaUnavailableError, classifyFailure, clipChapters } from "./media.ts";
+import { cutAudio, absoluteChunks } from "./segment.ts";
 import { Publisher, audioKey } from "./publish.ts";
-
-interface Args {
-  vodId: string;
-  url: string;
-  callbackUrl: string;
-}
-
-function parseArgs(argv: readonly string[]): Args {
-  const values = new Map<string, string>();
-  for (let index = 0; index < argv.length - 1; index++) {
-    const key = argv[index];
-    if (key !== undefined && key.startsWith("--")) values.set(key.slice(2), argv[index + 1] ?? "");
-  }
-  const vodId = values.get("vod") ?? "";
-  const url = values.get("url") ?? "";
-  const callbackUrl = values.get("callback") ?? "";
-  if (vodId === "" || url === "" || callbackUrl === "") {
-    throw new Error("нужны --vod, --url и --callback");
-  }
-  return { vodId, url, callbackUrl };
-}
+import { parseArgs } from "./args.ts";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -53,42 +33,53 @@ async function main(): Promise<void> {
     bucket: process.env["R2_BUCKET"] ?? "twitch-audio",
   });
 
-  const workDir = path.join("/workspace/home/work", args.vodId);
+  const workDir = path.join("/workspace/home/work", args.streamId);
   // Имя этому прогону: по нему Worker отличит повторный сигнал одного прогона
   // от нового разбора той же записи (`publish.ts`).
   const runId = crypto.randomUUID();
 
   try {
     const info = await readMediaInfo(args.url);
-    const chunks = await cutAudio(args.url, workDir);
+    // Отрезок эфира: прежняя программа сервиса границ не передаёт — тогда весь эфир.
+    const fromSeconds = args.fromSeconds ?? 0;
+    const toSeconds = Math.min(args.toSeconds ?? info.durationSeconds, info.durationSeconds);
+    if (fromSeconds >= toSeconds) {
+      throw new Error(`отрезок ${fromSeconds}–${toSeconds} с пуст: в записи ${info.durationSeconds} с`);
+    }
+    // Нарезка считает время от начала отрезка; ниже по течению время везде
+    // абсолютное, от начала эфира, и помнить, от чего отсчитана метка, не нужно.
+    const chunks = absoluteChunks(await cutAudio(args.url, workDir, { fromSeconds, toSeconds }), fromSeconds);
     if (chunks.length === 0) throw new Error("нарезка не дала ни одного куска");
 
-    await publisher.uploadChunks(args.vodId, workDir, chunks);
+    await publisher.uploadChunks(args.streamId, workDir, chunks);
     await publisher.notifyReady(args.callbackUrl, secret, {
+      streamId: args.streamId,
       vodId: args.vodId,
+      partStartSeconds: fromSeconds,
       runId,
       title: info.title,
       publishedAt: info.publishedAt,
-      durationSeconds: info.durationSeconds,
-      categories: info.chapters,
+      // Длина отрезка, а не всего эфира; главы — только его, в абсолютном времени.
+      durationSeconds: toSeconds - fromSeconds,
+      categories: clipChapters(info.chapters, fromSeconds, toSeconds),
       chunks: chunks.map((chunk) => ({
         index: chunk.index,
-        key: audioKey(args.vodId, chunk.index),
+        key: audioKey(args.streamId, chunk.index),
         offsetSeconds: chunk.offsetSeconds,
         durationSeconds: chunk.durationSeconds,
       })),
     });
-    console.log(`готово: ${chunks.length} кусков для ${args.vodId}`);
+    console.log(`готово: ${chunks.length} кусков для ${args.streamId}`);
   } catch (error) {
     const reason =
       error instanceof MediaUnavailableError
         ? error.reason
         : classifyFailure(error instanceof Error ? error.message : String(error));
-    console.error(`отказ по ${args.vodId}: ${reason.code} — ${reason.message}`);
+    console.error(`отказ по ${args.streamId}: ${reason.code} — ${reason.message}`);
     // Номер прогона идёт и здесь: по нему Worker отличает отказ этого захода
     // от запоздавшего отказа прошлого, когда разбор уже начался.
     await publisher
-      .notifyFailure(args.callbackUrl, secret, { vodId: args.vodId, runId, ...reason })
+      .notifyFailure(args.callbackUrl, secret, { streamId: args.streamId, vodId: args.vodId, runId, ...reason })
       .catch((notifyError: unknown) => {
         console.error("не удалось сообщить Worker об отказе:", notifyError);
       });

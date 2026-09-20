@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
 
 interface DocumentViewProps {
-  vodId: string;
+  streamId: string;
   onClose: () => void;
 }
 
@@ -18,14 +18,14 @@ type State =
   | { kind: "error"; message: string }
   | { kind: "ready"; text: string };
 
-export function DocumentView({ vodId, onClose }: DocumentViewProps): React.JSX.Element {
+export function DocumentView({ streamId, onClose }: DocumentViewProps): React.JSX.Element {
   const [state, setState] = useState<State>({ kind: "loading" });
 
   useEffect(() => {
     let cancelled = false;
     setState({ kind: "loading" });
 
-    fetch(`/api/streams/${encodeURIComponent(vodId)}/document`)
+    fetch(`/api/streams/${encodeURIComponent(streamId)}/document`)
       .then(async (response) => {
         if (!response.ok) throw new Error(`Документ не открылся (код ${response.status}).`);
         return await response.text();
@@ -40,7 +40,7 @@ export function DocumentView({ vodId, onClose }: DocumentViewProps): React.JSX.E
     return () => {
       cancelled = true;
     };
-  }, [vodId]);
+  }, [streamId]);
 
   return (
     <div className="space-y-4">

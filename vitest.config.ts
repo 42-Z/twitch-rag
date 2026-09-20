@@ -27,6 +27,7 @@ export default defineConfig(({ mode }) => ({
             ...configDefaults.exclude,
             "tests/unit/schedule-select.test.ts",
             "tests/unit/schedule-skip.test.ts",
+            "tests/unit/schedule-part-failure.test.ts",
             "tests/unit/document-naming.test.ts",
           ],
           // Сквозная проверка ходит в настоящие сервисы и берёт ключи из `.env`.

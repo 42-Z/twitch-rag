@@ -6,6 +6,7 @@
  */
 
 import { BookOpen, Code, Home, Plug, SlidersHorizontal, type LucideIcon } from "lucide-react";
+import { isStreamId } from "@/shared/stream-id.ts";
 
 /**
  * Признак раздела. По нему выбирается страница, и он же — ключ в наборе
@@ -71,7 +72,7 @@ export const FOOTER_ROUTES: readonly Route[] = ROUTES.filter((route) => route.pi
 export interface Matched {
   route: Route;
   /** Идентификатор записи, если адрес указывает на конкретный документ. */
-  vodId?: string;
+  streamId?: string;
 }
 
 /**
@@ -85,9 +86,9 @@ export function matchRoute(pathname: string): Matched {
   if (exact !== undefined) return { route: exact };
 
   const knowledge = ROUTES.find((route) => route.path === "/knowledge");
-  const document = /^\/knowledge\/(\d{1,20})$/.exec(path);
-  if (document !== null && knowledge !== undefined) {
-    return { route: knowledge, vodId: document[1] as string };
+  const document = /^\/knowledge\/([^/]+)$/.exec(path);
+  if (document !== null && knowledge !== undefined && isStreamId(document[1] as string)) {
+    return { route: knowledge, streamId: document[1] as string };
   }
   // Идентификатор испорчен — показываем список знаний, а не выбрасываем
   // человека на главную: раздел он выбрал верно, ошибся только в ссылке.
@@ -99,6 +100,6 @@ export function matchRoute(pathname: string): Matched {
 }
 
 /** Адрес документа внутри раздела знаний. */
-export function knowledgeDocumentPath(vodId: string): string {
-  return `/knowledge/${vodId}`;
+export function knowledgeDocumentPath(streamId: string): string {
+  return `/knowledge/${streamId}`;
 }

@@ -17,11 +17,13 @@ import type { IngestOutcome } from "../../src/ui/lib/owner.ts";
  */
 function summary(status: StreamSummary["status"], overrides: Partial<StreamSummary> = {}): StreamSummary {
   return {
+    streamId: "2875806701",
     vodId: "2875806701",
     status,
     title: "РАССКАЗЫВАЮ ИСТОРИИ И ЧЁ-ТА ДЕЛАЮ // !донат !приватка",
     url: "https://www.twitch.tv/videos/2875806701",
     publishedAt: "2026-09-16T16:54:29Z",
+    publishedAtUnix: 1789577669,
     durationSeconds: 13757,
     categories: [],
     sectionCount: 16,
@@ -57,6 +59,13 @@ describe("действия рядом с записью", () => {
       expect(html).toContain("Разобрать заново");
       expect(html).toContain("Удалить");
     }
+  });
+
+  test("у части эфира те же действия: их запись — отдельная, со своим документом", () => {
+    const html = render(summary("ready", { streamId: "2875806701-p2", part: 2, partCount: 2, docTitle: "Игра (часть 2 из 2)" }));
+    expect(html).toContain("Открыть документ");
+    expect(html).toContain("Разобрать заново");
+    expect(html).toContain("Удалить");
   });
 
   test("открыть документ предлагается только там, где он есть", () => {

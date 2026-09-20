@@ -9,6 +9,7 @@
 
 import { Box } from "@upstash/box";
 import { AppError, upstreamError } from "./errors.ts";
+import { STREAM_ID_PATTERN } from "./stream-id.ts";
 
 export interface BoxConfig {
   boxId: string;
@@ -42,8 +43,16 @@ export class BoxRunner {
    * висеть всё это время. О результате бокс сообщит сам — вызовом
    * `/api/internal/ingest-ready`.
    */
-  async startIngest(input: { vodId: string; url: string; callbackUrl: string }): Promise<void> {
-    const vodId = requireVodId(input.vodId);
+  async startIngest(input: {
+    streamId: string;
+    url: string;
+    callbackUrl: string;
+    /** Отрезок эфира, который надо скачать: секунды от начала эфира. */
+    fromSeconds: number;
+    toSeconds: number;
+  }): Promise<void> {
+    const streamId = requireStreamId(input.streamId);
+    const { fromSeconds, toSeconds } = requireRange(input.fromSeconds, input.toSeconds);
     const url = requireHttpsUrl(input.url, "адрес записи");
     const callbackUrl = requireHttpsUrl(input.callbackUrl, "адрес обратного вызова");
 
@@ -52,7 +61,7 @@ export class BoxRunner {
     // пропали сведения о том, почему разбор пошёл двумя копиями.
     const attempt = Date.now().toString(36);
 
-    const command = buildIngestCommand({ vodId, url, callbackUrl, attempt });
+    const command = buildIngestCommand({ streamId, url, callbackUrl, fromSeconds, toSeconds, attempt });
 
     await this.withRetries(async () => {
       const box = await Box.get(this.config.boxId, { apiKey: this.config.apiKey });
@@ -112,9 +121,11 @@ function sleep(ms: number): Promise<void> {
  * проходило бы молча, а Worker ждал бы обратного вызова, которого не будет.
  */
 export function buildIngestCommand(input: {
-  vodId: string;
+  streamId: string;
   url: string;
   callbackUrl: string;
+  fromSeconds: number;
+  toSeconds: number;
   attempt: string;
   /** Рабочий каталог. Меняется только в проверке, где бокса нет. */
   home?: string;
@@ -124,10 +135,12 @@ export function buildIngestCommand(input: {
     `if [ ! -f ${home}/pipeline.mjs ]; then echo "нет файла прогона" >&2; exit 3; fi; ` +
     `if [ ! -f ${home}/.env.pipeline ]; then echo "нет файла секретов" >&2; exit 4; fi; ` +
     `( node --env-file=${home}/.env.pipeline ${home}/pipeline.mjs` +
-    ` --vod '${input.vodId}'` +
+    ` --stream '${input.streamId}'` +
+    ` --from ${input.fromSeconds}` +
+    ` --to ${input.toSeconds}` +
     ` --url '${input.url}'` +
     ` --callback '${input.callbackUrl}'` +
-    ` > ${home}/ingest-${input.vodId}-${input.attempt}.log 2>&1 & )`
+    ` > ${home}/ingest-${input.streamId}-${input.attempt}.log 2>&1 & )`
   );
 }
 
@@ -136,12 +149,23 @@ export function buildIngestCommand(input: {
  * становится частью пути к журналу. Поэтому каждое проверяется по своей форме,
  * а не общим набором «безопасных символов»: набор, разрешающий точку и слэш,
  * пропускает и `../..`, и подстановку чужого пути.
+ *
+ * Образец идентификатора — общий с остальным сервисом (`stream-id.ts`): цифры
+ * и, у части эфира, суффикс «-p<номер>». Часть с номером ноль отвергается.
  */
-function requireVodId(value: string): string {
-  if (!/^\d{1,20}$/.test(value)) {
-    throw new AppError("invalid_input", "Идентификатор записи Twitch состоит только из цифр.");
+function requireStreamId(value: string): string {
+  if (!STREAM_ID_PATTERN.test(value) || /-p0+$/.test(value)) {
+    throw new AppError("invalid_input", "Идентификатор записи — номер записи Twitch, у части эфира с суффиксом «-p2».");
   }
   return value;
+}
+
+/** Границы уходят в команду числами, поэтому должны быть целыми и упорядоченными. */
+function requireRange(fromSeconds: number, toSeconds: number): { fromSeconds: number; toSeconds: number } {
+  if (!Number.isSafeInteger(fromSeconds) || !Number.isSafeInteger(toSeconds) || fromSeconds < 0 || fromSeconds >= toSeconds) {
+    throw new AppError("invalid_input", "Границы отрезка эфира — целые секунды, начало меньше конца.");
+  }
+  return { fromSeconds, toSeconds };
 }
 
 function requireHttpsUrl(value: string, what: string): string {

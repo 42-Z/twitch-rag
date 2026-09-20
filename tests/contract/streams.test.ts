@@ -118,6 +118,7 @@ describe("защита токеном владельца", () => {
 /** Запись в том или ином состоянии разбора; время начала разбора задаётся отдельно. */
 function streamRecord(overrides: Partial<StreamRecord>): StreamRecord {
   return {
+    streamId: "2345678901",
     vodId: "2345678901",
     status: "processing",
     title: "Пятничный разбор кода",
@@ -202,6 +203,7 @@ describe("POST /api/streams — ручное добавление", () => {
   test("уже разобранная запись отвергается кодом already_processed", async () => {
     const { services } = servicesWith({
       existing: {
+        streamId: "2345678901",
         vodId: "2345678901",
         status: "ready",
         title: "т",
@@ -349,6 +351,7 @@ describe("DELETE /api/streams/:vodId", () => {
     const cutoff = Math.floor(Date.now() / 1000);
     const { services } = servicesWith({
       existing: {
+        streamId: "2345678901",
         vodId: "2345678901",
         status: "processing",
         title: "Пятничный разбор кода",
@@ -382,6 +385,7 @@ describe("DELETE /api/streams/:vodId", () => {
     const stale = Math.floor(Date.now() / 1000) - 25 * 60 * 60;
     const { services } = servicesWith({
       existing: {
+        streamId: "2345678901",
         vodId: "2345678901",
         status: "processing",
         title: "Пятничный разбор кода",

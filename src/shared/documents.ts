@@ -21,8 +21,8 @@ export class Documents {
     this.bucket = new Bucket({ token: config.token });
   }
 
-  static path(vodId: string): string {
-    return `streams/${vodId}.md`;
+  static path(streamId: string): string {
+    return `streams/${streamId}.md`;
   }
 
   /**
@@ -44,9 +44,9 @@ export class Documents {
    * `public, max-age=3600`, и повторный разбор до часа оставался бы невидимым.
    * `no-store` документация называет выбором для приватного содержимого.
    */
-  async save(vodId: string, markdown: string): Promise<void> {
+  async save(streamId: string, markdown: string): Promise<void> {
     try {
-      await this.bucket.put(Documents.path(vodId), markdown, {
+      await this.bucket.put(Documents.path(streamId), markdown, {
         contentType: "text/markdown; charset=utf-8",
         cache: "no-store",
         multipart: true,
@@ -56,27 +56,27 @@ export class Documents {
     }
   }
 
-  async read(vodId: string): Promise<string> {
+  async read(streamId: string): Promise<string> {
     let download: { body: ReadableStream<Uint8Array> };
     try {
-      download = await this.bucket.get(Documents.path(vodId));
+      download = await this.bucket.get(Documents.path(streamId));
     } catch (error) {
       throw new AppError("not_found", "Документ этой трансляции не найден.", { cause: error });
     }
     return await new Response(download.body).text();
   }
 
-  async exists(vodId: string): Promise<boolean> {
+  async exists(streamId: string): Promise<boolean> {
     try {
-      return await this.bucket.exists(Documents.path(vodId));
+      return await this.bucket.exists(Documents.path(streamId));
     } catch (error) {
       throw upstreamError("хранилище документов", error);
     }
   }
 
-  async remove(vodId: string): Promise<void> {
+  async remove(streamId: string): Promise<void> {
     try {
-      await this.bucket.del(Documents.path(vodId));
+      await this.bucket.del(Documents.path(streamId));
     } catch (error) {
       throw upstreamError("хранилище документов", error);
     }

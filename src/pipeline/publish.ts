@@ -20,7 +20,12 @@ export interface R2Config {
 }
 
 export interface IngestPayload {
+  /** Запись реестра: `<vodId>` или `<vodId>-p<номер части>`. */
+  streamId: string;
+  /** Номер записи на площадке. */
   vodId: string;
+  /** Начало отрезка от начала эфира. */
+  partStartSeconds: number;
   /**
    * Идентификатор этого прогона. По нему Worker называет инстанс разбора:
    * повторный сигнал того же прогона (бокс шлёт его снова после обрыва сети)
@@ -36,8 +41,8 @@ export interface IngestPayload {
   chunks: Array<{ index: number; key: string; offsetSeconds: number; durationSeconds: number }>;
 }
 
-export function audioKey(vodId: string, index: number): string {
-  return `audio/${vodId}/chunk-${String(index).padStart(4, "0")}.m4a`;
+export function audioKey(streamId: string, index: number): string {
+  return `audio/${streamId}/chunk-${String(index).padStart(4, "0")}.m4a`;
 }
 
 export class Publisher {
@@ -57,11 +62,11 @@ export class Publisher {
     this.endpoint = `https://${config.accountId}.r2.cloudflarestorage.com/${config.bucket}`;
   }
 
-  async uploadChunks(vodId: string, workDir: string, chunks: readonly AudioChunk[]): Promise<void> {
+  async uploadChunks(streamId: string, workDir: string, chunks: readonly AudioChunk[]): Promise<void> {
     for (const chunk of chunks) {
       const body = await readFile(path.join(workDir, chunk.file));
       await this.withRetries(async () => {
-        const response = await this.client.fetch(`${this.endpoint}/${audioKey(vodId, chunk.index)}`, {
+        const response = await this.client.fetch(`${this.endpoint}/${audioKey(streamId, chunk.index)}`, {
           method: "PUT",
           body,
           headers: { "content-type": "audio/mp4" },
@@ -85,7 +90,7 @@ export class Publisher {
   async notifyFailure(
     callbackUrl: string,
     secret: string,
-    failure: { vodId: string; runId: string; code: string; message: string },
+    failure: { streamId: string; vodId: string; runId: string; code: string; message: string },
   ): Promise<void> {
     await this.postJson(callbackUrl, secret, { ...failure, failed: true });
   }

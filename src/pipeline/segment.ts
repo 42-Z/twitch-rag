@@ -6,15 +6,24 @@
  * процессорному времени, а при лимите 25 МБ на файл оставляет десятикратный
  * запас.
  *
- * Куски по десять минут, потому что у распознавания 60 секунд на запрос:
- * часовой кусок в этот срок не укладывается.
+ * Куски по двадцать минут (`AUDIO_CHUNK_SECONDS`): у распознавания 60 секунд на
+ * запрос, часовой кусок в этот срок не укладывается, а двадцатиминутный
+ * отвечает за 11,7 с. Размер выбран не только под время ответа: число
+ * кусков — слагаемое лимита внешних обращений на прогон разбора, и он же
+ * задаёт порог деления эфира (`shared/stream-parts.ts`).
+ *
+ * Качается только нужный отрезок записи (`--download-sections`): часть эфира
+ * разбирается отдельным прогоном и остальных частей не касается. Флаг
+ * `--force-keyframes-at-cuts` не используется — он вдвое увеличивает
+ * процессорное время бокса (замер в `specs/006-split-long-streams/research.md`).
+ * Нарезка отрезка считает время от нуля, поэтому смещения кусков приводятся
+ * ко времени всего эфира (`absoluteChunks`).
  */
 
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
-
-export const CHUNK_SECONDS = 600;
+import { AUDIO_CHUNK_SECONDS } from "../shared/stream-parts.ts";
 
 export interface AudioChunk {
   index: number;
@@ -24,7 +33,30 @@ export interface AudioChunk {
   durationSeconds: number;
 }
 
-export async function cutAudio(url: string, workDir: string): Promise<AudioChunk[]> {
+/** Границы отрезка записи, секунды от начала эфира. */
+export interface AudioRange {
+  fromSeconds: number;
+  toSeconds: number;
+}
+
+/** Аргумент `--download-sections`: `*01:00:00-01:32:00`, как в проверенной команде. */
+export function formatSection(fromSeconds: number, toSeconds: number): string {
+  return `*${clock(fromSeconds)}-${clock(toSeconds)}`;
+}
+
+function clock(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours, minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
+}
+
+/** Смещения кусков — от начала эфира, а не от начала отрезка. */
+export function absoluteChunks(chunks: readonly AudioChunk[], fromSeconds: number): AudioChunk[] {
+  return chunks.map((chunk) => ({ ...chunk, offsetSeconds: chunk.offsetSeconds + fromSeconds }));
+}
+
+export async function cutAudio(url: string, workDir: string, range: AudioRange): Promise<AudioChunk[]> {
   await rm(workDir, { recursive: true, force: true });
   await mkdir(workDir, { recursive: true });
 
@@ -32,7 +64,16 @@ export async function cutAudio(url: string, workDir: string): Promise<AudioChunk
   const pattern = path.join(workDir, "chunk_%04d.m4a");
 
   await pipeThrough(
-    ["yt-dlp", ["-f", "bestaudio", "--no-part", "--no-warnings", "-o", "-", url]],
+    [
+      "yt-dlp",
+      [
+        "-f", "bestaudio",
+        "--no-part", "--no-warnings",
+        "--download-sections", formatSection(range.fromSeconds, range.toSeconds),
+        "-o", "-",
+        url,
+      ],
+    ],
     [
       "ffmpeg",
       [
@@ -41,7 +82,7 @@ export async function cutAudio(url: string, workDir: string): Promise<AudioChunk
         "-vn",
         "-c:a", "aac", "-b:a", "32k", "-ac", "1", "-ar", "16000",
         "-f", "segment",
-        "-segment_time", String(CHUNK_SECONDS),
+        "-segment_time", String(AUDIO_CHUNK_SECONDS),
         "-reset_timestamps", "1",
         "-segment_list", indexPath,
         "-segment_list_type", "csv",

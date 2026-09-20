@@ -39,11 +39,21 @@ function streamFields(): string[] {
   ];
 }
 
+/**
+ * Реестр со своим содержимым: перечень идентификаторов в том порядке, в каком
+ * его отдаёт индекс (от новых к старым), и поля записей по идентификатору.
+ * Без него реестр отдаёт одну пропущенную запись.
+ */
+let registryScenario: { ids: string[]; fields: Record<string, string[]> } | undefined;
+
 /** Ответ хранилища на команду: плоский ответ либо результат с ошибкой. */
 function registryAnswer(command: unknown[]): unknown {
   const name = String(command[0] ?? "").toUpperCase();
-  if (name === "ZRANGE") return [VOD_ID];
+  if (name === "ZRANGE") return registryScenario?.ids ?? [VOD_ID];
   if (name === "HGETALL" && command[1] === "channel") return ["login", "5opka", "displayName", "5opka"];
+  if (name === "HGETALL" && registryScenario !== undefined) {
+    return registryScenario.fields[String(command[1]).replace(/^stream:/, "")] ?? [];
+  }
   if (name === "HGETALL") return streamFields();
   return null;
 }
@@ -165,4 +175,86 @@ test("стили компонентов попали в сборку", async ({ 
   const box = await page.getByRole("button", { name: "Открыть меню" }).boundingBox();
   expect(box?.width).toBe(36);
   expect(box?.height).toBe(36);
+});
+
+/** Поля записи разобранного или разбираемого эфира, как их отдаёт хранилище. */
+function fieldsOf(vodId: string, extra: Record<string, string>): string[] {
+  const base: Record<string, string> = {
+    vodId,
+    status: "ready",
+    url: `https://www.twitch.tv/videos/${vodId}`,
+    publishedAt: "2026-09-16T12:00:00Z",
+    publishedAtUnix: "1789560000",
+    durationSeconds: "10800",
+    categories: "[]",
+    sectionCount: "5",
+    source: "auto",
+    attempts: "1",
+    ...extra,
+  };
+  return Object.entries(base).flat();
+}
+
+test("части одного эфира стоят подряд и по порядку, у каждой видно, какая она", async ({ page, server }) => {
+  // Индекс отдаёт записи от новых к старым, и вторая часть эфира идёт в нём
+  // раньше первой. Страница обязана поставить их по порядку эфира.
+  registryScenario = {
+    ids: ["300", "200-p2", "200-p1", "100"],
+    fields: {
+      "300": fieldsOf("300", { docTitle: "Свежий эфир", publishedAtUnix: "1789646400" }),
+      "200-p2": fieldsOf("200", {
+        docTitle: "Игра (часть 2 из 2)",
+        part: "2",
+        partCount: "2",
+        partStartSeconds: "10800",
+        publishedAtUnix: "1789570800",
+      }),
+      "200-p1": fieldsOf("200", {
+        docTitle: "Игра (часть 1 из 2)",
+        part: "1",
+        partCount: "2",
+        partStartSeconds: "0",
+        publishedAtUnix: "1789560000",
+      }),
+      "100": fieldsOf("100", { docTitle: "Старый эфир", publishedAtUnix: "1789473600" }),
+    },
+  };
+  try {
+    await stubServices(page, server.url, {});
+    await page.goto("/knowledge");
+
+    const names = page.locator("li p.font-medium");
+    await expect(names).toHaveCount(4);
+    expect(await names.allTextContents()).toEqual([
+      "Свежий эфир",
+      "Игра (часть 1 из 2)",
+      "Игра (часть 2 из 2)",
+      "Старый эфир",
+    ]);
+  } finally {
+    registryScenario = undefined;
+  }
+});
+
+test("часть без имени опознаётся по дате и номеру части", async ({ page, server }) => {
+  registryScenario = {
+    ids: ["200-p2"],
+    fields: {
+      "200-p2": fieldsOf("200", {
+        status: "processing",
+        part: "2",
+        partCount: "3",
+        partStartSeconds: "7200",
+      }),
+    },
+  };
+  try {
+    await stubServices(page, server.url, {});
+    await page.goto("/knowledge");
+
+    await expect(page.getByText(/· часть 2 из 3/)).toBeVisible();
+    await expect(page.getByText("разбирается…")).toBeVisible();
+  } finally {
+    registryScenario = undefined;
+  }
 });

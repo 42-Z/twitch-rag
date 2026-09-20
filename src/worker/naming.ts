@@ -15,7 +15,7 @@
 
 import type { Services } from "./env.ts";
 import type { StreamRecord } from "../shared/registry.ts";
-import { documentName } from "../shared/document-name.ts";
+import { documentName, withPartLabel } from "../shared/document-name.ts";
 import { documentSectionTitles, renameDocumentHeader } from "../shared/documents.ts";
 
 /**
@@ -44,11 +44,11 @@ export async function nameDocumentsWithoutNames(
       // Неудача именования не повод валить проверку: без имени запись
       // остаётся различимой по дате, а следующая проверка попробует снова —
       // но не бесконечно.
-      console.error(`[имя ${record.vodId}] ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`[имя ${record.streamId}] ${error instanceof Error ? error.message : String(error)}`);
       await services.registry
-        .patchStream(record.vodId, { nameAttempts: tried + 1 })
+        .patchStream(record.streamId, { nameAttempts: tried + 1 })
         .catch((patchError: unknown) =>
-          console.error(`[имя ${record.vodId}] счёт попыток не сохранился: ${String(patchError)}`),
+          console.error(`[имя ${record.streamId}] счёт попыток не сохранился: ${String(patchError)}`),
         );
     }
   }
@@ -66,19 +66,26 @@ export async function nameDocumentsWithoutNames(
  * заново, и это дешевле.
  */
 async function nameOne(record: StreamRecord, services: Services): Promise<void> {
-  const markdown = await services.documents.read(record.vodId);
+  const markdown = await services.documents.read(record.streamId);
   const sectionTitles = documentSectionTitles(markdown);
   if (sectionTitles.length === 0) {
     throw new Error("в документе нет ни одного раздела — имени взяться неоткуда.");
   }
 
-  const name = await services.models.composeDocumentName({
+  const generated = await services.models.composeDocumentName({
     publishedAt: record.publishedAt,
     sectionTitles,
-    sessionId: record.vodId,
+    sessionId: record.streamId,
   });
+  // Имя части называет часть — так же, как при разборе (FR-005).
+  const name = withPartLabel(
+    generated,
+    record.part !== undefined && record.partCount !== undefined
+      ? { index: record.part, count: record.partCount }
+      : undefined,
+  );
 
-  await services.documents.save(record.vodId, renameDocumentHeader(markdown, name));
-  await services.knowledge.renameStream(record.vodId, name);
-  await services.registry.patchStream(record.vodId, { docTitle: name });
+  await services.documents.save(record.streamId, renameDocumentHeader(markdown, name));
+  await services.knowledge.renameStream(record.streamId, name);
+  await services.registry.patchStream(record.streamId, { docTitle: name });
 }

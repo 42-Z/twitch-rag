@@ -14,7 +14,9 @@ import { AppError } from "../../src/shared/errors.ts";
 const runner = new BoxRunner({ boxId: "box_test", apiKey: "key_test" });
 
 const good = {
-  vodId: "2345678901",
+  streamId: "2345678901",
+  fromSeconds: 0,
+  toSeconds: 21600,
   url: "https://www.twitch.tv/videos/2345678901",
   callbackUrl: "https://example.workers.dev/api/internal/ingest-ready",
 };
@@ -30,19 +32,36 @@ async function reject(input: Partial<typeof good>): Promise<AppError> {
 
 describe("проверка аргументов запуска разбора", () => {
   test("выход из каталога журнала отвергается", async () => {
-    const error = await reject({ vodId: "../../etc/passwd" });
+    const error = await reject({ streamId: "../../etc/passwd" });
     expect(error).toBeInstanceOf(AppError);
     expect(error.code).toBe("invalid_input");
   });
 
   test("идентификатор со слэшем или точкой отвергается", async () => {
-    expect((await reject({ vodId: "234/567" })).code).toBe("invalid_input");
-    expect((await reject({ vodId: "234.567" })).code).toBe("invalid_input");
+    expect((await reject({ streamId: "234/567" })).code).toBe("invalid_input");
+    expect((await reject({ streamId: "234.567" })).code).toBe("invalid_input");
   });
 
   test("буквы и дефис в идентификаторе отвергаются", async () => {
-    expect((await reject({ vodId: "-rf" })).code).toBe("invalid_input");
-    expect((await reject({ vodId: "abc" })).code).toBe("invalid_input");
+    expect((await reject({ streamId: "-rf" })).code).toBe("invalid_input");
+    expect((await reject({ streamId: "abc" })).code).toBe("invalid_input");
+  });
+
+  test("идентификатор части принимается, а часть без номера или с нулём — нет", async () => {
+    await expect(runner.startIngest({ ...good, streamId: "2345678901-p2", url: "http://x" })).rejects.toMatchObject({
+      message: expect.stringContaining("адрес"),
+    });
+    expect((await reject({ streamId: "2345678901-p" })).code).toBe("invalid_input");
+    expect((await reject({ streamId: "2345678901-p0" })).code).toBe("invalid_input");
+    expect((await reject({ streamId: "2345678901-p2; id" })).code).toBe("invalid_input");
+  });
+
+  test("границы отрезка — целые, неотрицательные и по порядку", async () => {
+    expect((await reject({ fromSeconds: 1.5 })).code).toBe("invalid_input");
+    expect((await reject({ fromSeconds: -1 })).code).toBe("invalid_input");
+    expect((await reject({ fromSeconds: 100, toSeconds: 100 })).code).toBe("invalid_input");
+    expect((await reject({ fromSeconds: 200, toSeconds: 100 })).code).toBe("invalid_input");
+    expect((await reject({ toSeconds: Number.NaN })).code).toBe("invalid_input");
   });
 
   test("кавычка в адресе отвергается — иначе она вырвалась бы из команды", async () => {
@@ -55,7 +74,7 @@ describe("проверка аргументов запуска разбора", 
   });
 
   test("пустые значения отвергаются", async () => {
-    expect((await reject({ vodId: "" })).code).toBe("invalid_input");
+    expect((await reject({ streamId: "" })).code).toBe("invalid_input");
     expect((await reject({ url: "" })).code).toBe("invalid_input");
   });
 });
@@ -83,9 +102,11 @@ describe("команда запуска прогона", () => {
 
   function run(home: string): { code: number | null; stderr: string } {
     const command = buildIngestCommand({
-      vodId: "2345678901",
+      streamId: "2345678901",
       url: "https://www.twitch.tv/videos/2345678901",
       callbackUrl: "https://example.workers.dev/api/internal/ingest-ready",
+      fromSeconds: 0,
+      toSeconds: 100,
       attempt: "t1",
       home,
     });
@@ -118,15 +139,19 @@ describe("команда запуска прогона", () => {
 
   test("журнал захода и значения записи попадают в команду", () => {
     const command = buildIngestCommand({
-      vodId: "2345678901",
+      streamId: "2345678901-p2",
       url: "https://www.twitch.tv/videos/2345678901",
       callbackUrl: "https://example.workers.dev/api/internal/ingest-ready",
+      fromSeconds: 21600,
+      toSeconds: 43200,
       attempt: "t1",
       home: "/workspace/home",
     });
 
-    expect(command).toContain("ingest-2345678901-t1.log");
-    expect(command).toContain("--vod '2345678901'");
+    expect(command).toContain("ingest-2345678901-p2-t1.log");
+    expect(command).toContain("--stream '2345678901-p2'");
+    expect(command).toContain("--from 21600");
+    expect(command).toContain("--to 43200");
     expect(command).toContain("--url 'https://www.twitch.tv/videos/2345678901'");
     expect(command).toContain("--callback 'https://example.workers.dev/api/internal/ingest-ready'");
   });

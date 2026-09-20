@@ -35,6 +35,7 @@ const section: FoundSection = {
   score: 0.82,
   category: "World of Warcraft",
   stream: {
+    streamId: "2345678901",
     vodId: "2345678901",
     title: "Пятничный разбор кода",
     publishedAt: "2026-03-14T18:03:00Z",
@@ -128,7 +129,7 @@ describe("имя документа в выдаче", () => {
     sections: [
       { title: "Выборы и «Новые люди»", text: "Текст раздела.", startSeconds: 4350, endSeconds: 4720, category: "Just Chatting" },
     ],
-    stream: { vodId: "2345678901", publishedAt: "2026-03-14T18:03:00Z" },
+    stream: { streamId: "2345678901", vodId: "2345678901", publishedAt: "2026-03-14T18:03:00Z" },
     language: "ru",
     docTitle: "Как разыграли зрителей треком на час",
   });
@@ -149,7 +150,7 @@ describe("имя документа в выдаче", () => {
   test("в ответе стоит то же имя, что в метаданных", async () => {
     const name = built[0]?.metadata.title ?? "";
     const { services } = servicesWith([
-      { ...section, stream: { vodId: "2345678901", title: name, publishedAt: "2026-03-14T18:03:00Z", url: "https://x?t=1" } },
+      { ...section, stream: { streamId: "2345678901", vodId: "2345678901", title: name, publishedAt: "2026-03-14T18:03:00Z", url: "https://x?t=1" } },
     ]);
 
     const result = await searchKnowledge(parseSearchRequest({ query: "выборы" }), services);

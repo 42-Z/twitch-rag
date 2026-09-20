@@ -8,6 +8,8 @@ import { z } from "zod";
 import { AppError } from "../../shared/errors.ts";
 import { MAX_ATTEMPTS, isStale, skippedStreamRecord, type StreamRecord } from "../../shared/registry.ts";
 import { skipReason } from "../../shared/twitch.ts";
+import { formatStreamId, parseStreamId, requireStreamId } from "../../shared/stream-id.ts";
+import { splitIntoParts, type StreamPart } from "../../shared/stream-parts.ts";
 import type { Env, Services } from "../env.ts";
 import { parseJson, requireAdminToken } from "./owner.ts";
 
@@ -53,16 +55,18 @@ export async function handleAddStream(
     throw new AppError("invalid_input", "Не удалось определить идентификатор записи из адреса.");
   }
 
-  const existing = await services.registry.getStream(vodId);
+  // Пока эфир не делится, запись эфира и запись реестра — одно и то же.
+  const streamId = vodId;
+  const existing = await services.registry.getStream(streamId);
   if (existing !== undefined && existing.status === "ready") {
     throw new AppError("already_processed", "Эта запись уже разобрана.");
   }
   // Повторное добавление той же записи — не ошибка: она уже в работе.
   if (isBusy(existing, Math.floor(Date.now() / 1000))) {
-    return Response.json({ vodId, status: "processing" }, { status: 202 });
+    return Response.json({ streamId, vodId, status: "processing" }, { status: 202 });
   }
 
-  return respondToIngest(vodId, await startStreamIngest(vodId, "manual", services, callbackBaseUrl));
+  return respondToIngest(streamId, await startStreamIngest(streamId, "manual", services, callbackBaseUrl));
 }
 
 /**
@@ -71,8 +75,13 @@ export async function handleAddStream(
  * Разбор идёт не всегда: запись, которую разбирать нечего, помечается
  * пропущенной с причиной, и вызывающий обязан узнать об этом — иначе он
  * ответит владельцу, что работа начата, тогда как её не будет.
+ *
+ * Если разбор пошёл, исход называет запись реестра, которая разбирается: у
+ * длинного эфира владелец просит «эфир», а в работу берётся одна его часть.
  */
-export type IngestOutcome = { status: "processing" } | { status: "skipped"; reason: string };
+export type IngestOutcome =
+  | { status: "processing"; streamId: string; part?: { index: number; count: number } }
+  | { status: "skipped"; reason: string };
 
 /**
  * Ответ на запуск разбора по его исходу.
@@ -81,32 +90,102 @@ export type IngestOutcome = { status: "processing" } | { status: "skipped"; reas
  * клиент, не читающий тело, иначе счёл бы пропуск начатым разбором. Ошибкой
  * пропуск не объявляется — владелец сделал всё правильно, а запись просто не
  * подлежит разбору.
+ *
+ * У поделённого эфира ответ называет часть и их число: владелец, добавивший
+ * девятичасовой эфир, не должен гадать, почему разбирается «половина».
  */
-function respondToIngest(vodId: string, outcome: IngestOutcome): Response {
+function respondToIngest(requestedId: string, outcome: IngestOutcome): Response {
+  const { vodId } = parseStreamId(requestedId);
   if (outcome.status === "skipped") {
-    return Response.json({ vodId, status: "skipped", reason: outcome.reason }, { status: 200 });
+    return Response.json({ streamId: requestedId, vodId, status: "skipped", reason: outcome.reason }, { status: 200 });
   }
-  return Response.json({ vodId, status: "processing" }, { status: 202 });
+  return Response.json(
+    {
+      streamId: outcome.streamId,
+      vodId,
+      status: "processing",
+      ...(outcome.part === undefined ? {} : { part: outcome.part.index, partCount: outcome.part.count }),
+    },
+    { status: 202 },
+  );
 }
 
 /**
- * Общий путь запуска разбора — из ручного добавления и из расписания.
- * Расхождение между ними было бы источником неучтённых дублей.
+ * Какую часть эфира взять в разбор по запрошенному идентификатору.
+ *
+ * - С суффиксом — эта часть; эфир обязан делиться, и номер не больше числа частей.
+ * - Без суффикса у эфира, который не делится, — сам эфир.
+ * - Без суффикса у делимого эфира — первая часть, чья запись не разобрана и не
+ *   занята: так владелец, добавивший эфир целиком, продолжает с того места,
+ *   где остановились.
+ */
+async function chooseTarget(
+  requestedPart: number | undefined,
+  vodId: string,
+  parts: readonly StreamPart[],
+  services: Services,
+  nowUnix: number,
+): Promise<{ part: StreamPart; streamId: string }> {
+  const divided = parts.length > 1;
+
+  if (requestedPart !== undefined) {
+    const part = parts[requestedPart - 1];
+    if (!divided || part === undefined) {
+      throw new AppError("invalid_input", "У этого эфира нет такой части.", {
+        hint: divided ? `Частей у эфира: ${parts.length}.` : "Эфир не делится на части.",
+      });
+    }
+    return { part, streamId: formatStreamId(vodId, part.index) };
+  }
+
+  const first = parts[0] as StreamPart;
+  if (!divided) return { part: first, streamId: vodId };
+
+  let anyBusy = false;
+  for (const part of parts) {
+    const streamId = formatStreamId(vodId, part.index);
+    const record = await services.registry.getStream(streamId);
+    if (record?.status === "ready") continue;
+    if (isBusy(record, nowUnix)) {
+      anyBusy = true;
+      continue;
+    }
+    return { part, streamId };
+  }
+  if (anyBusy) {
+    throw new AppError("busy", "Части этого эфира уже разбираются.", {
+      hint: "Дождитесь окончания разбора — второй запуск испортил бы работу первому.",
+    });
+  }
+  throw new AppError("already_processed", "Все части этого эфира уже разобраны.");
+}
+
+/**
+ * Общий путь запуска разбора — из ручного добавления, из повторного разбора и
+ * из расписания. Расхождение между ними было бы источником неучтённых дублей.
+ *
+ * Эфир длиннее порога разбирается по частям (`stream-parts.ts`): каждая часть —
+ * своя запись реестра, свой прогон конвейера на своём отрезке и свой прогон
+ * разбора. Деление применяется здесь, поэтому оно действует на всех путях
+ * запуска (FR-016).
  */
 export async function startStreamIngest(
-  vodId: string,
+  streamId: string,
   source: "auto" | "manual",
   services: Services,
   callbackBaseUrl: string,
   previousAttempts = 0,
 ): Promise<IngestOutcome> {
+  const { vodId, part: requestedPart } = parseStreamId(streamId);
+  const nowUnix = Math.floor(Date.now() / 1000);
+
   // Последняя защита перед запуском: она не зависит от того, кто позвал —
   // расписание, ручное добавление или путь, которого ещё нет. Раньше проверка
   // стояла только у вызывающих, и однажды разбор одной записи пошёл двумя
   // копиями сразу: два конвейера качали эфир в одну папку и затирали друг
   // другу куски, а журнал второй копии стёр след первой.
-  const current = await services.registry.getStream(vodId);
-  if (isBusy(current, Math.floor(Date.now() / 1000))) {
+  const current = await services.registry.getStream(streamId);
+  if (isBusy(current, nowUnix)) {
     throw new AppError("busy", "Эта запись уже разбирается.", {
       hint: "Дождитесь окончания разбора — второй запуск испортил бы работу первому.",
     });
@@ -119,37 +198,53 @@ export async function startStreamIngest(
     return { status: "skipped", reason };
   }
 
+  const parts = splitIntoParts(video.durationSeconds);
+  const divided = parts.length > 1;
+  const target = await chooseTarget(requestedPart, vodId, parts, services, nowUnix);
+  const targetId = target.streamId;
+  // Число попыток считается на часть: пришедшее относится к запрошенной записи.
+  const attemptsBefore = targetId === streamId ? previousAttempts : 0;
+
   // Занятие записи — вплотную к запуску и одним действием хранилища:
   // проверка выше читает запись отдельно от записи, и в это окно второй запуск
   // успевает проскочить. Здесь проскочить некуда. Стоит оно после опроса
   // площадки нарочно: откажись площадка отвечать, запись осталась бы занятой
   // до истечения суток, а разбора бы не было.
-  const claimed = await services.registry.claimForIngest(vodId, Math.floor(Date.now() / 1000));
+  const claimed = await services.registry.claimForIngest(targetId, nowUnix);
   if (!claimed) {
     throw new AppError("busy", "Эта запись уже разбирается.", {
       hint: "Дождитесь окончания разбора — второй запуск испортил бы работу первому.",
     });
   }
 
+  // Время части — время эфира плюс её начало: части одного эфира лежат в
+  // индексе рядом и по порядку. У неделёной записи начало нулевое.
+  const publishedAtUnix = video.publishedAtUnix + target.part.startSeconds;
   await services.registry.putStream({
+    streamId: targetId,
     vodId,
     status: "processing",
     title: video.title,
     url: video.url,
-    publishedAt: video.publishedAt,
-    publishedAtUnix: video.publishedAtUnix,
-    durationSeconds: video.durationSeconds,
+    publishedAt: target.part.startSeconds === 0 ? video.publishedAt : new Date(publishedAtUnix * 1000).toISOString(),
+    publishedAtUnix,
+    durationSeconds: target.part.endSeconds - target.part.startSeconds,
     categories: [],
     source,
-    attempts: previousAttempts + 1,
-    processedAt: Math.floor(Date.now() / 1000),
+    attempts: attemptsBefore + 1,
+    processedAt: nowUnix,
+    ...(divided
+      ? { part: target.part.index, partCount: target.part.count, partStartSeconds: target.part.startSeconds }
+      : {}),
   });
 
   try {
     await services.box.startIngest({
-      vodId,
+      streamId: targetId,
       url: video.url,
       callbackUrl: `${callbackBaseUrl}/api/internal/ingest-ready`,
+      fromSeconds: target.part.startSeconds,
+      toSeconds: target.part.endSeconds,
     });
   } catch (error) {
     // Бокс не принял работу — разбора не будет, и держать запись в
@@ -158,8 +253,8 @@ export async function startStreamIngest(
     // Причина — в журнал, а не в реестр: реестр читается публичным токеном,
     // и текст ошибки увидел бы любой посетитель страницы.
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[разбор ${vodId}] запуск не удался: ${message}`);
-    await services.registry.patchStream(vodId, {
+    console.error(`[разбор ${targetId}] запуск не удался: ${message}`);
+    await services.registry.patchStream(targetId, {
       status: "failed",
       reason: "Разбор не запустился. Запись попробуют разобрать заново.",
       processedAt: Math.floor(Date.now() / 1000),
@@ -167,13 +262,39 @@ export async function startStreamIngest(
     throw error;
   }
 
-  return { status: "processing" };
+  // Неделёная запись эфира, который теперь делится, осталась от прежней
+  // версии. Её знания и документ покрывают тот же эфир, что и части, и
+  // оставлять их значило бы дублировать выдачу. Готовой такой записи быть не
+  // могло: при кусках по десять минут даже шесть часов дают 57 обращений из
+  // 50 (specs/006-split-long-streams/research.md §2). Убирается после
+  // успешного запуска — сорвавшийся запуск не должен терять прежнее.
+  if (divided && current !== undefined && targetId !== streamId) {
+    await removeLegacyWhole(vodId, services);
+  }
+
+  return {
+    status: "processing",
+    streamId: targetId,
+    ...(divided ? { part: { index: target.part.index, count: target.part.count } } : {}),
+  };
 }
 
-// --- GET /api/streams/:vodId/document (FR-031) ---
+async function removeLegacyWhole(vodId: string, services: Services): Promise<void> {
+  try {
+    await services.knowledge.removeStream(vodId);
+    await services.documents.remove(vodId).catch(() => undefined);
+    await services.registry.removeStream(vodId);
+  } catch (error) {
+    // Лишняя неделёная запись — не повод валить уже начатый разбор частей.
+    console.error(`[разбор ${vodId}] прежняя неделёная запись не убрана: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
-export async function handleGetDocument(vodId: string, services: Services): Promise<Response> {
-  const text = await services.documents.read(vodId);
+// --- GET /api/streams/:streamId/document (FR-031) ---
+
+export async function handleGetDocument(streamId: string, services: Services): Promise<Response> {
+  // Форма идентификатора проверяется до обращения к любому хранилищу.
+  const text = await services.documents.read(requireStreamId(streamId));
   return new Response(text, {
     headers: {
       "content-type": "text/markdown; charset=utf-8",
@@ -185,15 +306,17 @@ export async function handleGetDocument(vodId: string, services: Services): Prom
   });
 }
 
-// --- DELETE /api/streams/:vodId (FR-033) ---
+// --- DELETE /api/streams/:streamId (FR-033) ---
 
 export async function handleDeleteStream(
-  vodId: string,
+  streamId: string,
   request: Request,
   env: Env,
   services: Services,
 ): Promise<Response> {
   requireAdminToken(request, env);
+  // Удаление сносит векторы по префиксу: строка не по образцу до хранилищ не доходит.
+  const { vodId } = parseStreamId(streamId);
 
   // Пока разбор идёт, удалять нельзя: инстанс Workflow не связан с этим
   // запросом и продолжит писать — вернёт векторы, документ и запись реестра,
@@ -201,19 +324,19 @@ export async function handleDeleteStream(
   // индекса, следующий запуск по тому же адресу сочтёт её новой и поднимет
   // второй разбор; два разбора делят эфир по-своему и стирают разделы друг
   // друга. Занятая запись отвергается, пока не закончит или не устареет.
-  const existing = await services.registry.getStream(vodId);
+  const existing = await services.registry.getStream(streamId);
   if (existing?.status === "processing" && !isStale(existing, Math.floor(Date.now() / 1000))) {
     throw new AppError("busy", "Эту запись сейчас разбирают — удалить её нельзя.");
   }
 
-  const deletedChunks = await services.knowledge.removeStream(vodId);
-  await services.documents.remove(vodId).catch(() => undefined);
-  await services.registry.removeStream(vodId);
+  const deletedChunks = await services.knowledge.removeStream(streamId);
+  await services.documents.remove(streamId).catch(() => undefined);
+  await services.registry.removeStream(streamId);
 
-  return Response.json({ vodId, deletedChunks });
+  return Response.json({ streamId, vodId, deletedChunks });
 }
 
-// --- POST /api/streams/:vodId/reparse: повторный разбор (FR-028) ---
+// --- POST /api/streams/:streamId/reparse: повторный разбор (FR-028) ---
 
 /**
  * Сколько попыток зачитывается запуску повторного разбора.
@@ -235,15 +358,16 @@ const REPARSE_ATTEMPTS = MAX_ATTEMPTS - 1;
  * сведениям о стримере, действующим на момент запуска (FR-033).
  */
 export async function handleReparseStream(
-  vodId: string,
+  streamId: string,
   request: Request,
   env: Env,
   services: Services,
   callbackBaseUrl: string,
 ): Promise<Response> {
   requireAdminToken(request, env);
+  parseStreamId(streamId);
 
-  const existing = await services.registry.getStream(vodId);
+  const existing = await services.registry.getStream(streamId);
   if (existing === undefined) {
     throw new AppError("not_found", "Такой трансляции в реестре нет.");
   }
@@ -255,6 +379,6 @@ export async function handleReparseStream(
 
   // Исход тот же, что у добавления: повторный разбор идёт тем же путём, и для
   // записи, которую разбирать нечего, ответ «разбор начат» был бы неправдой.
-  const outcome = await startStreamIngest(vodId, existing.source, services, callbackBaseUrl, REPARSE_ATTEMPTS);
-  return respondToIngest(vodId, outcome);
+  const outcome = await startStreamIngest(streamId, existing.source, services, callbackBaseUrl, REPARSE_ATTEMPTS);
+  return respondToIngest(streamId, outcome);
 }

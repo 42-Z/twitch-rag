@@ -13,10 +13,24 @@ import { startStreamIngest } from "./routes/streams.ts";
 import { nameDocumentsWithoutNames } from "./naming.ts";
 import { MAX_ATTEMPTS, isStale, skippedStreamRecord, type StreamRecord } from "../shared/registry.ts";
 import { skipReason, type TwitchVideo } from "../shared/twitch.ts";
+import { formatStreamId } from "../shared/stream-id.ts";
+import { splitIntoParts, type StreamPart } from "../shared/stream-parts.ts";
+
+/** Что взято в разбор: запись площадки и та её часть, до которой дошла очередь. */
+export interface NextIngest {
+  video: TwitchVideo;
+  part: StreamPart;
+}
 
 /**
- * Отбор одной записи к разбору из списка канала и текущего реестра.
+ * Отбор одной части к разбору из списка канала и текущего реестра.
  * Вынесено отдельно от сетевых вызовов, чтобы решение проверялось без них.
+ *
+ * Эфир длиннее порога делится на части (`stream-parts.ts`), и каждая часть —
+ * отдельная запись реестра; отбираются части, а не эфиры. Эфир, который
+ * делится, автоматикой не берётся, если в реестре есть неделёная запись под
+ * его номером: она осталась от прежней версии и не переразбирается задним
+ * числом (FR-015); владелец может разобрать такой эфир вручную.
  *
  * `liveStreamId` — эфир, идущий прямо сейчас (`undefined`, если канал не в
  * эфире). Площадка заводит запись архива в первые секунды трансляции, и та
@@ -30,27 +44,52 @@ export function selectNextVideo(
   watchFrom: number,
   nowUnix: number,
   liveStreamId?: string,
-): TwitchVideo | undefined {
-  const candidates = videos.filter((video) => {
-    if (liveStreamId !== undefined && video.streamId === liveStreamId) return false;
+): NextIngest | undefined {
+  const candidates: Array<NextIngest & { startsAtUnix: number }> = [];
 
-    const record = known.get(video.vodId);
+  for (const video of videos) {
+    if (liveStreamId !== undefined && video.streamId === liveStreamId) continue;
 
-    if (record === undefined) {
-      // Новая запись — берётся только если появилась после подключения канала (FR-003).
-      return video.publishedAtUnix >= watchFrom;
+    const parts = splitIntoParts(video.durationSeconds);
+    const divided = parts.length > 1;
+    if (divided && known.has(video.vodId)) continue;
+
+    for (const part of parts) {
+      const record = known.get(formatStreamId(video.vodId, divided ? part.index : undefined));
+      if (!isCandidate(record, video, watchFrom, nowUnix)) continue;
+      candidates.push({ video, part, startsAtUnix: video.publishedAtUnix + part.startSeconds });
     }
-    if (record.status === "ready" || record.status === "skipped") return false;
-    if (record.status === "processing") return isStale(record, nowUnix);
-    // failed: повторяется, пока не исчерпаны попытки.
-    return record.attempts < MAX_ATTEMPTS;
-  });
+  }
 
   if (candidates.length === 0) return undefined;
-  // Самая ранняя необработанная — чтобы база росла по порядку эфиров.
-  return candidates.reduce((earliest, video) =>
-    video.publishedAtUnix < earliest.publishedAtUnix ? video : earliest,
-  );
+  // Самая ранняя необработанная часть — чтобы база росла по порядку эфиров.
+  const earliest = candidates.reduce((best, item) => (item.startsAtUnix < best.startsAtUnix ? item : best));
+  return { video: earliest.video, part: earliest.part };
+}
+
+function isCandidate(
+  record: StreamRecord | undefined,
+  video: TwitchVideo,
+  watchFrom: number,
+  nowUnix: number,
+): boolean {
+  if (record === undefined) {
+    // Новая запись — берётся только если эфир начался после подключения канала (FR-003).
+    return video.publishedAtUnix >= watchFrom;
+  }
+  if (record.status === "ready" || record.status === "skipped") return false;
+  if (record.status === "processing") return isStale(record, nowUnix);
+  // failed: повторяется, пока не исчерпаны попытки.
+  return record.attempts < MAX_ATTEMPTS;
+}
+
+/**
+ * Номера записей площадки, по которым в реестре что-то есть — целыми записями
+ * или частями. По ним обход архива останавливается на первой известной записи:
+ * у делёного эфира в реестре нет ключа с номером записи, только ключи частей.
+ */
+export function knownVideoIds(known: ReadonlyMap<string, StreamRecord>): Set<string> {
+  return new Set([...known.values()].map((record) => record.vodId));
 }
 
 /**
@@ -109,10 +148,10 @@ const ARCHIVE_MAX_PAGES = 5;
 const EXHAUSTED_REASON = "Разбор не удался за отведённое число попыток. Разобрать запись заново можно вручную.";
 
 export async function retireExhausted(known: Map<string, StreamRecord>, services: Services): Promise<void> {
-  for (const [vodId, record] of known) {
+  for (const [streamId, record] of known) {
     if (record.status !== "failed" || record.attempts < MAX_ATTEMPTS) continue;
-    await services.registry.patchStream(vodId, { status: "skipped", reason: EXHAUSTED_REASON });
-    known.set(vodId, { ...record, status: "skipped", reason: EXHAUSTED_REASON });
+    await services.registry.patchStream(streamId, { status: "skipped", reason: EXHAUSTED_REASON });
+    known.set(streamId, { ...record, status: "skipped", reason: EXHAUSTED_REASON });
   }
 }
 
@@ -122,7 +161,7 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
 
   try {
     const nowUnix = Math.floor(Date.now() / 1000);
-    const knownIds = await services.registry.knownVodIds();
+    const knownIds = await services.registry.knownStreamIds();
     const known = new Map<string, StreamRecord>();
     for (const id of knownIds) {
       const record = await services.registry.getStream(id);
@@ -130,13 +169,14 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
     }
 
     await retireExhausted(known, services);
+    const knownVideos = knownVideoIds(known);
 
     const videos = await services.twitch.listArchive(channel.twitchUserId, {
       pageSize: ARCHIVE_PAGE,
       maxPages: ARCHIVE_MAX_PAGES,
       // Просмотр прекращается, как только в списке показалась известная
       // запись: значит, до более старых мы уже добрались в прошлые разы.
-      stopAt: (video) => known.has(video.vodId),
+      stopAt: (video) => knownVideos.has(video.vodId),
     });
 
     // Спрашивается до отбора: если эфир идёт, его растущую запись брать
@@ -152,14 +192,15 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
       if (reason === undefined) continue; // недостижимо: отбор проверяет то же
       const record = skippedStreamRecord(video, "auto", reason);
       await services.registry.putStream(record);
-      known.set(record.vodId, record);
+      known.set(record.streamId, record);
     }
 
     const next = selectNextVideo(videos, known, channel.watchFrom, nowUnix, liveStreamId);
     if (next !== undefined) {
-      const previousAttempts = known.get(next.vodId)?.attempts ?? 0;
+      const streamId = formatStreamId(next.video.vodId, next.part.count > 1 ? next.part.index : undefined);
+      const previousAttempts = known.get(streamId)?.attempts ?? 0;
       try {
-        await startStreamIngest(next.vodId, "auto", services, callbackBaseUrl, previousAttempts);
+        await startStreamIngest(streamId, "auto", services, callbackBaseUrl, previousAttempts);
       } catch (error) {
         // Разбор этой записи уже идёт — исход гонки, а не сбой проверки:
         // отбор строится по реестру, прочитанному в начале, и запись могла

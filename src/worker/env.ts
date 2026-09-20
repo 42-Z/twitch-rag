@@ -54,9 +54,18 @@ export interface Env {
  * Заголовок с площадки остаётся служебным полем реестра.
  */
 export interface IngestParams {
+  /** Запись реестра: ключ документа, векторов, объектов на время разбора. */
+  streamId: string;
+  /** Номер записи на площадке: по нему строится ссылка на момент эфира. */
   vodId: string;
+  /** Начало разбираемого отрезка от начала эфира; у неделёной записи 0. */
+  partStartSeconds: number;
+  /** Какая это часть эфира; у неделёной записи нет. */
+  part?: { index: number; count: number };
   url: string;
+  /** Время начала разбираемого отрезка (у части — время эфира плюс её начало). */
   publishedAt: string;
+  /** Длина разбираемого отрезка, а не всего эфира. */
   durationSeconds: number;
   categories: Array<{ title: string; startSeconds: number; endSeconds: number }>;
   chunks: Array<{ index: number; key: string; offsetSeconds: number; durationSeconds: number }>;

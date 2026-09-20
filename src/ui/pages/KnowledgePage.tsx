@@ -15,7 +15,7 @@ import { ingestOutcome, type IngestOutcome } from "../lib/owner.ts";
 
 interface KnowledgePageProps {
   /** Идентификатор открытого документа, если адрес указывает на него. */
-  vodId?: string;
+  streamId?: string;
   /** Токен владельца: без него удаление недоступно. */
   adminToken: string;
   canManage: boolean;
@@ -25,14 +25,14 @@ interface KnowledgePageProps {
 }
 
 export function KnowledgePage({
-  vodId,
+  streamId,
   adminToken,
   canManage,
   refreshToken,
   onChanged,
 }: KnowledgePageProps): React.JSX.Element {
-  if (vodId !== undefined) {
-    return <DocumentView vodId={vodId} onClose={() => navigate("/knowledge")} />;
+  if (streamId !== undefined) {
+    return <DocumentView streamId={streamId} onClose={() => navigate("/knowledge")} />;
   }
 
   /**
@@ -45,8 +45,8 @@ export function KnowledgePage({
     throw new Error(data.error?.message ?? `${fallback} (код ${response.status}).`);
   }
 
-  async function remove(vodId: string): Promise<void> {
-    const response = await fetch(`/api/streams/${encodeURIComponent(vodId)}`, {
+  async function remove(streamId: string): Promise<void> {
+    const response = await fetch(`/api/streams/${encodeURIComponent(streamId)}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${adminToken}` },
     });
@@ -60,8 +60,8 @@ export function KnowledgePage({
    * Исход возвращается списку: показать такую запись разбираемой значило бы
    * обещать работу, которой сервис не начал.
    */
-  async function reparse(vodId: string): Promise<IngestOutcome> {
-    const response = await fetch(`/api/streams/${encodeURIComponent(vodId)}/reparse`, {
+  async function reparse(streamId: string): Promise<IngestOutcome> {
+    const response = await fetch(`/api/streams/${encodeURIComponent(streamId)}/reparse`, {
       method: "POST",
       headers: { Authorization: `Bearer ${adminToken}` },
     });

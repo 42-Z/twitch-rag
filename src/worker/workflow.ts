@@ -2,9 +2,14 @@
  * Разбор записи: распознать → составить документ → дать имя → проиндексировать.
  *
  * Оформлено шагами с независимыми повторами, а не одним длинным вызовом:
- * на семичасовой эфир приходится больше сорока кусков, и один вызов не прошёл
- * бы ни по числу внешних обращений, ни по процессорному времени. При сбое
- * переигрывается шаг, а не весь эфир.
+ * у шестичасовой части (наибольшей из возможных) восемнадцать кусков по
+ * двадцать минут, и один вызов не прошёл бы по процессорному времени. При
+ * сбое переигрывается шаг, а не весь эфир. Число внешних обращений на весь
+ * прогон ограничено пятьюдесятью — отсюда и деление длинного эфира на части
+ * (`shared/stream-parts.ts`): разбирается одна часть, а не весь эфир.
+ *
+ * Время внутри части абсолютное, от начала эфира: метки кусков приходят из
+ * конвейера уже такими, и Worker их не сдвигает.
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
@@ -12,12 +17,14 @@ import type { Env, IngestParams, Services } from "./env.ts";
 import { createServices } from "./env.ts";
 import { shiftSegments, prevailingLanguage, formatDuration } from "../shared/time.ts";
 import { renderTranscript } from "../shared/openrouter.ts";
-import { planDocumentParts, assignCategories, uniqueCategories } from "../shared/categories.ts";
+import { planDocumentParts, assignCategories, uniqueCategories, findCoverageGaps } from "../shared/categories.ts";
+import { withPartLabel } from "../shared/document-name.ts";
 import { normalizeSections, type ParsedSection } from "../shared/sections.ts";
 import { buildChunks } from "../shared/chunks.ts";
 import { renderDocumentHeader, Documents } from "../shared/documents.ts";
 import { chunkId } from "../shared/knowledge.ts";
 import { composePart } from "../shared/document-parts.ts";
+import { removeTemporary } from "./temporary.ts";
 
 /**
  * Сколько знаков расшифровки приходится на один проход.
@@ -35,18 +42,13 @@ import { composePart } from "../shared/document-parts.ts";
 const CHARS_PER_PART = 30000;
 /** Сколько кусков идёт в одно обращение за эмбеддингами. */
 const EMBED_BATCH = 32;
-/** Разрыв больше этого означает пропущенный участок эфира, а не паузу в речи. */
-const MAX_COVERAGE_GAP_SECONDS = 300;
 
 /** Текст распознанного куска: живёт от распознавания до конца разбора. */
-const transcriptKey = (vodId: string, index: number): string =>
-  `transcript/${vodId}/chunk-${String(index).padStart(4, "0")}.txt`;
+const transcriptKey = (streamId: string, index: number): string =>
+  `transcript/${streamId}/chunk-${String(index).padStart(4, "0")}.txt`;
 
 /** Склеенная расшифровка всего эфира — то, что видят проходы составления. */
-const transcriptFullKey = (vodId: string): string => `transcript/${vodId}/full.txt`;
-
-/** Временное при разборе: удаляется вместе с аудио, каким бы ни был исход. */
-const TEMPORARY_PREFIXES = ["audio/", "transcript/"] as const;
+const transcriptFullKey = (streamId: string): string => `transcript/${streamId}/full.txt`;
 
 /**
  * Что владелец видит вместо причины отказа.
@@ -74,11 +76,11 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       // Причина сбоя уходит в журнал и только туда: в реестр она не пишется,
       // а реестр читается публичным токеном — текст ошибки увидел бы любой
       // посетитель страницы.
-      console.error(`[разбор ${params.vodId}] ${message}`);
-      if (!isEngineReset(message) && !(await isAlreadyFinished(params.vodId, services))) {
+      console.error(`[разбор ${params.streamId}] ${message}`);
+      if (!isEngineReset(message) && !(await isAlreadyFinished(params.streamId, services))) {
         // Запись не должна остаться в processing навсегда — её возьмут заново
         // на следующем опросе (schedule.ts проверяет attempts).
-        await services.registry.patchStream(params.vodId, {
+        await services.registry.patchStream(params.streamId, {
           status: "failed",
           reason: FAILURE_REASON,
         });
@@ -123,7 +125,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
         // самого текста ничего не выдаёт.
         const text = renderTranscript(segments);
         if (text !== "") {
-          await this.env.AUDIO.put(transcriptKey(params.vodId, chunk.index), text, {
+          await this.env.AUDIO.put(transcriptKey(params.streamId, chunk.index), text, {
             httpMetadata: { contentType: "text/plain; charset=utf-8" },
           });
         }
@@ -151,12 +153,12 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
 
     if (phraseCount === 0) {
       await step.do("отметить эфир без речи", async () => {
-        await services.registry.patchStream(params.vodId, {
+        await services.registry.patchStream(params.streamId, {
           status: "skipped",
           reason: "В записи не распознано ни одной фразы.",
           processedAt: nowUnix(),
         });
-        await this.cleanupTemporary(params.vodId);
+        await removeTemporary(this.env.AUDIO, params.streamId);
       });
       return;
     }
@@ -169,7 +171,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       for (const [position, chunk] of params.chunks.entries()) {
         // В куске без речи текста нет и быть не должно — это не пропажа.
         if (phrasesPerChunk[position] === 0) continue;
-        const object = await this.env.AUDIO.get(transcriptKey(params.vodId, chunk.index));
+        const object = await this.env.AUDIO.get(transcriptKey(params.streamId, chunk.index));
         if (object === null) throw new Error(`расшифровка куска ${chunk.index} исчезла из хранилища`);
         parts.push(await object.text());
       }
@@ -177,7 +179,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       // на месте музыки и тишины появились бы пустые абзацы, которых в
       // расшифровке целиком не было.
       const text = parts.filter((part) => part !== "").join("\n");
-      await this.env.AUDIO.put(transcriptFullKey(params.vodId), text, {
+      await this.env.AUDIO.put(transcriptFullKey(params.streamId), text, {
         httpMetadata: { contentType: "text/plain; charset=utf-8" },
       });
       return text.length;
@@ -193,12 +195,17 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // В каждом проходе модель получает расшифровку целиком, но пишет только
     // свой участок: иначе отсылки внутри эфира теряют смысл.
     const partCount = Math.max(1, Math.ceil(transcriptChars / CHARS_PER_PART));
-    const parts = planDocumentParts(params.durationSeconds, params.categories, partCount);
+    // Отрезок эфира, который разбирает этот прогон: у части — не от нуля.
+    const range = {
+      startSeconds: params.partStartSeconds,
+      endSeconds: params.partStartSeconds + params.durationSeconds,
+    };
+    const parts = planDocumentParts(range, params.categories, partCount);
 
     const written: ParsedSection[] = [];
     for (const [index, part] of parts.entries()) {
       const composed = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () => {
-        const object = await this.env.AUDIO.get(transcriptFullKey(params.vodId));
+        const object = await this.env.AUDIO.get(transcriptFullKey(params.streamId));
         if (object === null) throw new Error("склеенная расшифровка исчезла из хранилища");
         return await composePart(services.models, {
           transcript: await object.text(),
@@ -208,7 +215,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
           streamerInfo,
           // Ключ закрепления за провайдером на всю запись: проходы одной
           // записи должны попадать на тот же узел, иначе кэш входа не сработает.
-          sessionId: params.vodId,
+          sessionId: params.streamId,
         });
       });
       written.push(...composed.map((section) => ({ ...section, category: "" })));
@@ -227,12 +234,12 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       throw new Error("после приведения не осталось ни одного раздела");
     }
 
-    const gaps = findCoverageGaps(sections, params.durationSeconds);
+    const gaps = findCoverageGaps(sections, range);
     if (gaps.length > 0) {
       // Разрыв во времени означает пропущенный кусок эфира. Документ всё
       // равно сохраняется — терять разобранное из-за дыры нельзя, — но
       // изъян попадает в реестр, а не остаётся незамеченным (FR-040).
-      console.warn(`разрывы покрытия по ${params.vodId}: ${JSON.stringify(gaps)}`);
+      console.warn(`разрывы покрытия по ${params.streamId}: ${JSON.stringify(gaps)}`);
     }
 
     // --- имя документа ---
@@ -240,17 +247,19 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // документа, и в метаданных кусков, и в реестре, поэтому вырабатывается
     // до индексации. Заголовок с площадки в запрос не идёт вовсе (FR-027).
     const docTitle = await step.do("выработать имя документа", async () => {
-      return await services.models.composeDocumentName({
+      const name = await services.models.composeDocumentName({
         publishedAt: params.publishedAt,
         sectionTitles: sections.map((section) => section.title),
-        sessionId: params.vodId,
+        sessionId: params.streamId,
       });
+      // Имя части называет часть (FR-005): метка ставится здесь, в коде.
+      return withPartLabel(name, params.part);
     });
 
     // --- индексация ---
     const chunksToIndex = buildChunks({
       sections,
-      stream: { vodId: params.vodId, publishedAt: params.publishedAt },
+      stream: { streamId: params.streamId, vodId: params.vodId, publishedAt: params.publishedAt },
       language,
       docTitle,
     });
@@ -273,9 +282,9 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // трансляцию без знаний, если повтор не удастся (FR-032).
     await step.do("убрать куски прошлого разбора", async () => {
       const fresh = new Set(
-        chunksToIndex.map((chunk) => chunkId(chunk.vodId, chunk.sectionIndex, chunk.chunkIndex)),
+        chunksToIndex.map((chunk) => chunkId(chunk.streamId, chunk.sectionIndex, chunk.chunkIndex)),
       );
-      return await services.knowledge.removeExcept(params.vodId, fresh);
+      return await services.knowledge.removeExcept(params.streamId, fresh);
     });
 
     // --- документ и реестр ---
@@ -291,18 +300,18 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       const body = sections
         .map((section) => `## ${section.title} [${formatRange(section)}]\n\n${section.text}`)
         .join("\n\n");
-      await services.documents.save(params.vodId, `${header}\n\n${body}\n`);
+      await services.documents.save(params.streamId, `${header}\n\n${body}\n`);
     });
 
     await step.do("отметить запись разобранной", async () => {
-      await services.registry.patchStream(params.vodId, {
+      await services.registry.patchStream(params.streamId, {
         status: "ready",
         docTitle,
         language,
         sectionCount: sections.length,
         chunkCount: chunksToIndex.length,
         speechSeconds: Math.round(speechSeconds),
-        docPath: Documents.path(params.vodId),
+        docPath: Documents.path(params.streamId),
         processedAt: nowUnix(),
         // Пометка выставляется всегда, в том числе пустая: иначе на успешно
         // разобранной записи остаётся висеть причина отказа прошлой попытки.
@@ -313,28 +322,8 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     });
 
     await step.do("убрать временные файлы разбора", async () => {
-      await this.cleanupTemporary(params.vodId);
+      await removeTemporary(this.env.AUDIO, params.streamId);
     });
-  }
-
-  /**
-   * Уборка по префиксам: при любом исходе после разбора в хранилище не должно
-   * остаться ни кусков записи, ни расшифровки — ни целой, ни по частям.
-   */
-  private async cleanupTemporary(vodId: string): Promise<void> {
-    for (const prefix of TEMPORARY_PREFIXES) {
-      let cursor: string | undefined;
-      do {
-        const listed = await this.env.AUDIO.list({
-          prefix: `${prefix}${vodId}/`,
-          ...(cursor === undefined ? {} : { cursor }),
-        });
-        if (listed.objects.length > 0) {
-          await this.env.AUDIO.delete(listed.objects.map((object) => object.key));
-        }
-        cursor = listed.truncated ? listed.cursor : undefined;
-      } while (cursor !== undefined);
-    }
   }
 }
 
@@ -351,8 +340,8 @@ function nowUnix(): number {
  * скачивание, повторное распознавание за деньги и стирание уже готовых
  * векторов. Готовое должно оставаться готовым.
  */
-async function isAlreadyFinished(vodId: string, services: Services): Promise<boolean> {
-  const record = await services.registry.getStream(vodId).catch(() => undefined);
+async function isAlreadyFinished(streamId: string, services: Services): Promise<boolean> {
+  const record = await services.registry.getStream(streamId).catch(() => undefined);
   return record?.status === "ready" || record?.status === "skipped";
 }
 
@@ -387,25 +376,3 @@ function formatRange(section: ParsedSection): string {
   const range = `${clock(section.startSeconds)} — ${clock(section.endSeconds)}`;
   return section.category === "" ? range : `${range} · ${section.category}`;
 }
-
-/** Участки эфира, не покрытые ни одним разделом (FR-040). */
-export function findCoverageGaps(
-  sections: readonly ParsedSection[],
-  durationSeconds: number,
-): Array<{ from: number; to: number }> {
-  const ordered = [...sections].sort((a, b) => a.startSeconds - b.startSeconds);
-  const gaps: Array<{ from: number; to: number }> = [];
-  let cursor = 0;
-
-  for (const section of ordered) {
-    if (section.startSeconds - cursor > MAX_COVERAGE_GAP_SECONDS) {
-      gaps.push({ from: cursor, to: section.startSeconds });
-    }
-    cursor = Math.max(cursor, section.endSeconds);
-  }
-  if (durationSeconds - cursor > MAX_COVERAGE_GAP_SECONDS) {
-    gaps.push({ from: cursor, to: durationSeconds });
-  }
-  return gaps;
-}
-

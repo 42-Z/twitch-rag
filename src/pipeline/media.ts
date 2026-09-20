@@ -123,3 +123,21 @@ export function run(command: string, args: readonly string[]): Promise<RunResult
     });
   });
 }
+
+/**
+ * Главы записи в пределах отрезка, время остаётся абсолютным.
+ *
+ * Часть эфира знает только свой отрезок, поэтому главы, которых в нём нет,
+ * ей не нужны, а начавшаяся раньше — начинается на границе отрезка. Если ни
+ * одна глава отрезка не коснулась, категория одна — пустая, на весь отрезок.
+ */
+export function clipChapters(chapters: readonly Chapter[], fromSeconds: number, toSeconds: number): Chapter[] {
+  const clipped = chapters
+    .map((chapter) => ({
+      title: chapter.title,
+      startSeconds: Math.max(chapter.startSeconds, fromSeconds),
+      endSeconds: Math.min(chapter.endSeconds, toSeconds),
+    }))
+    .filter((chapter) => chapter.endSeconds > chapter.startSeconds);
+  return clipped.length > 0 ? clipped : [{ title: "", startSeconds: fromSeconds, endSeconds: toSeconds }];
+}

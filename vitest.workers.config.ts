@@ -47,6 +47,7 @@ export default defineProject({
       "tests/contract/**/*.test.ts",
       "tests/unit/schedule-select.test.ts",
       "tests/unit/schedule-skip.test.ts",
+      "tests/unit/schedule-part-failure.test.ts",
       "tests/unit/document-naming.test.ts",
     ],
     setupFiles: ["tests/worker/setup.ts"],
