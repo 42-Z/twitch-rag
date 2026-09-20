@@ -8,6 +8,7 @@
 
 import { Index } from "@upstash/vector";
 import { AppError, upstreamError } from "./errors.ts";
+import { requireStreamId } from "./stream-id.ts";
 
 export interface KnowledgeConfig {
   url: string;
@@ -154,6 +155,8 @@ export class Knowledge {
 
   /** Удаление всех кусков записи по префиксу идентификатора. */
   async removeStream(streamId: string): Promise<number> {
+    // Удаление идёт по префиксу: неподходящая строка сносила бы чужое.
+    requireStreamId(streamId);
     try {
       const result = await this.index.delete({ prefix: `${streamId}:` });
       return result.deleted;
@@ -173,6 +176,7 @@ export class Knowledge {
    * чего-либо ещё, по чему их можно отличить фильтром.
    */
   async removeExcept(streamId: string, keep: ReadonlySet<string>): Promise<number> {
+    requireStreamId(streamId);
     const stale: string[] = [];
     // Курсор — строка, и первый запрос идёт с "0": так это описано в
     // справочнике по точке `range`. Пустая строка в ответе означает, что
@@ -213,6 +217,7 @@ export class Knowledge {
    * в отличие от удаления, обновление не сдвигает страницы под собой.
    */
   async renameStream(streamId: string, title: string): Promise<number> {
+    requireStreamId(streamId);
     let renamed = 0;
     let cursor = "0";
     try {

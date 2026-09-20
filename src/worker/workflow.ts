@@ -24,6 +24,7 @@ import { buildChunks } from "../shared/chunks.ts";
 import { renderDocumentHeader, Documents } from "../shared/documents.ts";
 import { chunkId } from "../shared/knowledge.ts";
 import { composePart } from "../shared/document-parts.ts";
+import { removeTemporary } from "./temporary.ts";
 
 /**
  * Сколько знаков расшифровки приходится на один проход.
@@ -48,9 +49,6 @@ const transcriptKey = (streamId: string, index: number): string =>
 
 /** Склеенная расшифровка всего эфира — то, что видят проходы составления. */
 const transcriptFullKey = (streamId: string): string => `transcript/${streamId}/full.txt`;
-
-/** Временное при разборе: удаляется вместе с аудио, каким бы ни был исход. */
-const TEMPORARY_PREFIXES = ["audio/", "transcript/"] as const;
 
 /**
  * Что владелец видит вместо причины отказа.
@@ -160,7 +158,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
           reason: "В записи не распознано ни одной фразы.",
           processedAt: nowUnix(),
         });
-        await this.cleanupTemporary(params.streamId);
+        await removeTemporary(this.env.AUDIO, params.streamId);
       });
       return;
     }
@@ -324,28 +322,8 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     });
 
     await step.do("убрать временные файлы разбора", async () => {
-      await this.cleanupTemporary(params.streamId);
+      await removeTemporary(this.env.AUDIO, params.streamId);
     });
-  }
-
-  /**
-   * Уборка по префиксам: при любом исходе после разбора в хранилище не должно
-   * остаться ни кусков записи, ни расшифровки — ни целой, ни по частям.
-   */
-  private async cleanupTemporary(streamId: string): Promise<void> {
-    for (const prefix of TEMPORARY_PREFIXES) {
-      let cursor: string | undefined;
-      do {
-        const listed = await this.env.AUDIO.list({
-          prefix: `${prefix}${streamId}/`,
-          ...(cursor === undefined ? {} : { cursor }),
-        });
-        if (listed.objects.length > 0) {
-          await this.env.AUDIO.delete(listed.objects.map((object) => object.key));
-        }
-        cursor = listed.truncated ? listed.cursor : undefined;
-      } while (cursor !== undefined);
-    }
   }
 }
 

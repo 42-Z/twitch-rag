@@ -23,6 +23,7 @@ import {
 import { handleSetChannel, handleSetStreamer } from "./routes/channel.ts";
 import { requireAdminToken } from "./routes/owner.ts";
 import { runScheduledCheck } from "./schedule.ts";
+import { TEMPORARY_PREFIXES } from "./temporary.ts";
 
 export { StreamIngestWorkflow } from "./workflow.ts";
 
@@ -138,9 +139,6 @@ async function readJson(request: Request): Promise<unknown> {
 
 /** Объекты старше суток не могут принадлежать активному разбору — он длится минуты. */
 const STALE_AUDIO_SECONDS = 24 * 60 * 60;
-
-/** Временное при разборе: куски аудио и текст расшифровки. */
-const TEMPORARY_PREFIXES = ["audio/", "transcript/"] as const;
 
 async function cleanupStaleAudio(env: Env): Promise<void> {
   const cutoff = Date.now() - STALE_AUDIO_SECONDS * 1000;
