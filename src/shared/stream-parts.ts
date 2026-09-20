@@ -1,0 +1,59 @@
+/**
+ * Деление длинного эфира на части и размер куска аудио.
+ *
+ * Оба числа выведены из одного ограничения платформы и меняются вместе:
+ * бесплатный тариф Cloudflare даёт **50 внешних обращений на один прогон
+ * Workflow** — не на шаг ([документация](https://developers.cloudflare.com/workers/platform/limits/#subrequests)).
+ * Разбор одной записи тратит
+ *
+ *     N + P + 2×B + 8
+ *
+ * где N — кусков аудио (по одному распознаванию), P — проходов составления
+ * документа (знаков расшифровки ÷ 30 000), B — пачек кусков знаний по 32
+ * (эмбеддинги и запись в базу — два обращения на пачку), 8 — постоянная часть.
+ * Для шестичасовой части при кусках по 20 минут: N = 18, P = 7 (579 знаков в
+ * минуту, замер), B = 3 — итого 39 обращений; в худшем сочетании (плотная речь
+ * 900 знаков в минуту, два повтора сорвавшихся вызовов, уборка прежних
+ * кусков) — 46. Семичасовая часть в худшем случае дала бы 51, поэтому порог —
+ * шесть часов. Расчёт и замеры: `specs/006-split-long-streams/research.md` §2, §3.
+ *
+ * Кусок в 20 минут распознаётся за 11,7 с при таймауте провайдера 60 с.
+ */
+
+/** Длиннее этого эфир делится; граница включающая: ровно шесть часов — одна запись. */
+export const MAX_PART_SECONDS = 6 * 3600;
+
+/** Длина куска аудио, на которые конвейер режет запись. */
+export const AUDIO_CHUNK_SECONDS = 20 * 60;
+
+export interface StreamPart {
+  /** Номер части, с единицы. */
+  index: number;
+  /** Всего частей у эфира. */
+  count: number;
+  /** Начало части от начала эфира. */
+  startSeconds: number;
+  /** Конец части от начала эфира. */
+  endSeconds: number;
+}
+
+/**
+ * Части эфира равны по времени: наименьшее число частей, при котором ни одна
+ * не длиннее порога; границы стыкуются без дыр, последняя часть кончается
+ * ровно на длительности эфира. Эфир не длиннее порога — одна часть на весь эфир.
+ */
+export function splitIntoParts(durationSeconds: number): StreamPart[] {
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
+    throw new RangeError(`Длительность эфира должна быть неотрицательным числом, получено ${durationSeconds}`);
+  }
+  const total = Math.floor(durationSeconds);
+  if (total <= MAX_PART_SECONDS) return [{ index: 1, count: 1, startSeconds: 0, endSeconds: total }];
+
+  const count = Math.ceil(total / MAX_PART_SECONDS);
+  return Array.from({ length: count }, (_, position) => ({
+    index: position + 1,
+    count,
+    startSeconds: Math.floor((position * total) / count),
+    endSeconds: Math.floor(((position + 1) * total) / count),
+  }));
+}
