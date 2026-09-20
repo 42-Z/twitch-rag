@@ -140,6 +140,7 @@ export function createMcpServer(env: Env): McpServer {
         ],
         structuredContent: {
           streams: ready.map((stream) => ({
+            streamId: stream.streamId,
             vodId: stream.vodId,
             title: documentName(stream),
             publishedAt: stream.publishedAt,

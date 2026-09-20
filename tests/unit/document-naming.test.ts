@@ -51,6 +51,7 @@ interface Captured {
 
 function record(vodId: string, overrides: Partial<StreamRecord> = {}): StreamRecord {
   return {
+    streamId: vodId,
     vodId,
     status: "ready",
     title: "РАССКАЗЫВАЮ ИСТОРИИ И ЧЁ-ТА ДЕЛАЮ // !донат !приватка",

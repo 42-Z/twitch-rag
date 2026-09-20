@@ -74,7 +74,7 @@ function MenuItems({ routes, current }: { routes: readonly Route[]; current: Rou
 
 export function App(): React.JSX.Element {
   const pathname = usePathname();
-  const { route, vodId } = matchRoute(pathname);
+  const { route, streamId } = matchRoute(pathname);
 
   const [adminToken, setAdminToken] = useState("");
   const { health, tokenState } = useHealth(adminToken);
@@ -100,7 +100,7 @@ export function App(): React.JSX.Element {
     api: <ApiPage />,
     knowledge: (
       <KnowledgePage
-        {...(vodId === undefined ? {} : { vodId })}
+        {...(streamId === undefined ? {} : { streamId })}
         adminToken={adminToken}
         canManage={canManage}
         refreshToken={refreshToken}

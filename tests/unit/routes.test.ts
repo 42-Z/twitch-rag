@@ -25,12 +25,12 @@ describe("разбор адреса", () => {
   test("документ открывается по адресу внутри знаний", () => {
     const matched = matchRoute("/knowledge/2873255697");
     expect(matched.route.path).toBe("/knowledge");
-    expect(matched.vodId).toBe("2873255697");
+    expect(matched.streamId).toBe("2873255697");
   });
 
   test("хвостовой слэш не мешает", () => {
     expect(matchRoute("/assistant/").route.path).toBe("/assistant");
-    expect(matchRoute("/knowledge/2873255697/").vodId).toBe("2873255697");
+    expect(matchRoute("/knowledge/2873255697/").streamId).toBe("2873255697");
   });
 
   test("адрес раздела не совпадает с адресом MCP-сервера", () => {

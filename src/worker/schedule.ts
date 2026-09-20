@@ -109,10 +109,10 @@ const ARCHIVE_MAX_PAGES = 5;
 const EXHAUSTED_REASON = "Разбор не удался за отведённое число попыток. Разобрать запись заново можно вручную.";
 
 export async function retireExhausted(known: Map<string, StreamRecord>, services: Services): Promise<void> {
-  for (const [vodId, record] of known) {
+  for (const [streamId, record] of known) {
     if (record.status !== "failed" || record.attempts < MAX_ATTEMPTS) continue;
-    await services.registry.patchStream(vodId, { status: "skipped", reason: EXHAUSTED_REASON });
-    known.set(vodId, { ...record, status: "skipped", reason: EXHAUSTED_REASON });
+    await services.registry.patchStream(streamId, { status: "skipped", reason: EXHAUSTED_REASON });
+    known.set(streamId, { ...record, status: "skipped", reason: EXHAUSTED_REASON });
   }
 }
 
@@ -122,7 +122,7 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
 
   try {
     const nowUnix = Math.floor(Date.now() / 1000);
-    const knownIds = await services.registry.knownVodIds();
+    const knownIds = await services.registry.knownStreamIds();
     const known = new Map<string, StreamRecord>();
     for (const id of knownIds) {
       const record = await services.registry.getStream(id);
@@ -152,7 +152,7 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
       if (reason === undefined) continue; // недостижимо: отбор проверяет то же
       const record = skippedStreamRecord(video, "auto", reason);
       await services.registry.putStream(record);
-      known.set(record.vodId, record);
+      known.set(record.streamId, record);
     }
 
     const next = selectNextVideo(videos, known, channel.watchFrom, nowUnix, liveStreamId);

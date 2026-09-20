@@ -21,20 +21,20 @@ import type { StreamSummary } from "../lib/registry.ts";
 
 export interface StreamActionsProps {
   stream: StreamSummary;
-  onOpen: (vodId: string) => void;
+  onOpen: (streamId: string) => void;
   /** Повторный разбор: возвращает, начат он или запись не взята. */
-  onReparse?: (vodId: string) => Promise<IngestOutcome>;
-  onDelete?: (vodId: string) => Promise<void>;
+  onReparse?: (streamId: string) => Promise<IngestOutcome>;
+  onDelete?: (streamId: string) => Promise<void>;
   /** Сбой действия: список показывает его рядом с записью, а не вместо себя. */
-  onFailed: (vodId: string, text: string) => void;
+  onFailed: (streamId: string, text: string) => void;
   /** Запись ушла в работу или исчезла — список приводит себя в соответствие. */
-  onDone: (vodId: string, outcome: "reparsed" | "deleted") => void;
+  onDone: (streamId: string, outcome: "reparsed" | "deleted") => void;
   /**
    * Разбора не будет, и вот почему. Отдельно от сбоя: действие прошло, а
    * работы нет — состояние записи менять нечем, а объяснение нужно, иначе
    * владелец решит, что кнопка не сработала, и нажмёт её снова.
    */
-  onNote: (vodId: string, text: string) => void;
+  onNote: (streamId: string, text: string) => void;
 }
 
 export function StreamActions({
@@ -61,19 +61,19 @@ export function StreamActions({
         // Пропуск — не «запись ушла в работу»: показывать её разбираемой
         // значило бы обещать работу, которую сервис не начал.
         if (result?.kind === "skipped") {
-          onNote(stream.vodId, result.reason);
+          onNote(stream.streamId, result.reason);
           return;
         }
-        onDone(stream.vodId, outcome);
+        onDone(stream.streamId, outcome);
       })
-      .catch((error: unknown) => onFailed(stream.vodId, error instanceof Error ? error.message : String(error)))
+      .catch((error: unknown) => onFailed(stream.streamId, error instanceof Error ? error.message : String(error)))
       .finally(() => setBusy(undefined));
   }
 
   return (
     <div className="flex shrink-0 gap-2">
       {hasDocument && (
-        <Button size="sm" variant="secondary" onClick={() => onOpen(stream.vodId)}>
+        <Button size="sm" variant="secondary" onClick={() => onOpen(stream.streamId)}>
           Открыть документ
         </Button>
       )}
@@ -94,7 +94,7 @@ export function StreamActions({
                 (hasDocument ? " Прежний документ и знания заменятся новыми." : ""),
             );
             if (!confirmed) return;
-            void run("reparse", () => onReparse(stream.vodId), "reparsed");
+            void run("reparse", () => onReparse(stream.streamId), "reparsed");
           }}
         >
           {busy === "reparse" ? "Запускаю…" : "Разобрать заново"}
@@ -111,7 +111,7 @@ export function StreamActions({
             void run(
               "delete",
               async () => {
-                await onDelete(stream.vodId);
+                await onDelete(stream.streamId);
               },
               "deleted",
             );

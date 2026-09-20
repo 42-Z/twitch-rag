@@ -55,7 +55,7 @@ describe("имя документа из реестра", () => {
       "durationSeconds", "13740",
       "sectionCount", "18",
       "categories", "[]",
-    ]);
+    ], "2875806701");
 
     expect(summary?.docTitle).toBe("Как разыграли зрителей треком на час");
     expect(summary?.title).toBe("РАССКАЗЫВАЮ ИСТОРИИ // !донат");
@@ -68,20 +68,32 @@ describe("имя документа из реестра", () => {
     // где ждут имя, выдаёт себя за имя документа. Запись, разобранная до
     // появления имён, имени не имеет — так и показывается, а место показа
     // решает, чем её опознать.
-    const summary = toSummary(["vodId", "1", "status", "ready", "title", "Старая запись"]);
+    const summary = toSummary(["vodId", "1", "status", "ready", "title", "Старая запись"], "1");
 
     expect(summary?.docTitle).toBeUndefined();
     expect(documentName(summary!)).toBe("");
   });
 
   test("пустое имя читается как отсутствие имени", () => {
-    const summary = toSummary(["vodId", "1", "status", "ready", "title", "Старая запись", "docTitle", ""]);
+    const summary = toSummary(["vodId", "1", "status", "ready", "title", "Старая запись", "docTitle", ""], "1");
 
     expect(summary?.docTitle).toBeUndefined();
     expect(documentName(summary!)).toBe("");
   });
 
-  test("запись без vodId не превращается в пустую строку списка", () => {
-    expect(toSummary(["status", "ready"])).toBeUndefined();
+  test("пустой хеш не превращается в пустую строку списка", () => {
+    expect(toSummary([], "1")).toBeUndefined();
+  });
+
+  test("у записи без поля vodId номер записи площадки равен ключу", () => {
+    const summary = toSummary(["status", "ready"], "1");
+    expect(summary?.streamId).toBe("1");
+    expect(summary?.vodId).toBe("1");
+  });
+
+  test("у части номер записи площадки берётся из поля, а ключ — из индекса", () => {
+    const summary = toSummary(["vodId", "1", "status", "ready"], "1-p2");
+    expect(summary?.streamId).toBe("1-p2");
+    expect(summary?.vodId).toBe("1");
   });
 });

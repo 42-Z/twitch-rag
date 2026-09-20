@@ -45,6 +45,7 @@ describe("чтение списка из реестра", () => {
     const streams = await listStreams();
 
     expect(streams).toHaveLength(1);
+    expect(streams[0]?.streamId).toBe("1");
     expect(streams[0]?.vodId).toBe("1");
     expect(streams[0]?.status).toBe("ready");
   });

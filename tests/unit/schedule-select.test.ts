@@ -19,6 +19,7 @@ function video(vodId: string, publishedAtUnix: number, streamId = `stream-${vodI
 
 function record(vodId: string, status: StreamRecord["status"], overrides: Partial<StreamRecord> = {}): StreamRecord {
   return {
+    streamId: vodId,
     vodId,
     status,
     title: `Стрим ${vodId}`,
@@ -123,6 +124,7 @@ describe("запись идущего эфира", () => {
 describe("исчерпавшие попытки", () => {
   function record(overrides: Partial<StreamRecord>): StreamRecord {
     return {
+      streamId: "1",
       vodId: "1",
       status: "failed",
       title: "Эфир",
@@ -142,7 +144,7 @@ describe("исчерпавшие попытки", () => {
     // «неудачной» — владелец видит недоделку, а сводка знаний не считает её.
     const patched: Array<{ vodId: string; patch: Record<string, unknown> }> = [];
     const known = new Map<string, StreamRecord>([
-      ["1", record({ vodId: "1", status: "failed", attempts: MAX_ATTEMPTS, reason: "сервис недоступен" })],
+      ["1", record({ streamId: "1", vodId: "1", status: "failed", attempts: MAX_ATTEMPTS, reason: "сервис недоступен" })],
     ]);
     const services = {
       registry: {
@@ -167,6 +169,7 @@ describe("исчерпавшие попытки", () => {
       [
         "1",
         record({
+          streamId: "1",
           vodId: "1",
           status: "failed",
           attempts: MAX_ATTEMPTS,
@@ -192,8 +195,8 @@ describe("исчерпавшие попытки", () => {
   test("недоисчерпанные и уже готовые не трогаются", async () => {
     const patched: unknown[] = [];
     const known = new Map<string, StreamRecord>([
-      ["1", record({ vodId: "1", status: "failed", attempts: MAX_ATTEMPTS - 1 })],
-      ["2", record({ vodId: "2", status: "ready", attempts: 9 })],
+      ["1", record({ streamId: "1", vodId: "1", status: "failed", attempts: MAX_ATTEMPTS - 1 })],
+      ["2", record({ streamId: "2", vodId: "2", status: "ready", attempts: 9 })],
     ]);
     const services = {
       registry: {
@@ -223,7 +226,7 @@ describe("сбой опроса", () => {
           watchFrom: 0,
           addedAt: 0,
         }),
-        knownVodIds: async () => [],
+        knownStreamIds: async () => [],
         getStream: async () => undefined,
         recordCheck: async (mark: Record<string, unknown>) => {
           checks.push(mark);

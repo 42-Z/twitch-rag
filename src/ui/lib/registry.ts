@@ -22,6 +22,9 @@ export interface Chapter {
 }
 
 export interface StreamSummary {
+  /** Запись реестра: ключ адресов и действий. У части эфира — `<vodId>-p<номер>`. */
+  streamId: string;
+  /** Номер записи на площадке. */
   vodId: string;
   status: "processing" | "ready" | "skipped" | "failed";
   /** Заголовок с площадки: служебное поле, показывается только у неразобранного. */
@@ -115,14 +118,16 @@ export function fieldsToMap(fields: readonly string[]): Map<string, string> {
   return map;
 }
 
-export function toSummary(fields: string[]): StreamSummary | undefined {
+export function toSummary(fields: string[], streamId: string): StreamSummary | undefined {
+  // Пустой хеш — записи нет: ключ уже удалён, а в списке остался член индекса.
+  if (fields.length === 0) return undefined;
   const map = fieldsToMap(fields);
-  const vodId = map.get("vodId");
-  if (vodId === undefined) return undefined;
 
   const status = map.get("status") ?? "failed";
   return {
-    vodId,
+    streamId,
+    // У записей, разобранных до деления на части, номер записи площадки и есть ключ.
+    vodId: map.get("vodId") ?? streamId,
     status: status === "processing" || status === "ready" || status === "skipped" || status === "failed"
       ? status
       : "failed",
@@ -144,7 +149,9 @@ export async function listStreams(): Promise<StreamSummary[]> {
 
   const results = await redisPipeline<string[]>(ids.map((id) => ["HGETALL", `stream:${id}`]));
 
-  return results.map(toSummary).filter((summary): summary is StreamSummary => summary !== undefined);
+  return results
+    .map((fields, position) => toSummary(fields, String(ids[position])))
+    .filter((summary): summary is StreamSummary => summary !== undefined);
 }
 
 export async function getChannel(): Promise<ChannelSummary | undefined> {

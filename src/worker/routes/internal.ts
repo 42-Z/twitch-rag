@@ -7,10 +7,19 @@
  */
 
 import { AppError } from "../../shared/errors.ts";
+import { parseStreamId } from "../../shared/stream-id.ts";
 import type { Env, IngestParams, Services } from "../env.ts";
 
 export interface IngestReadyBody {
+  /** Номер записи на площадке. */
   vodId: string;
+  /**
+   * Запись реестра. Нет у сигнала прежней программы конвейера (она про части
+   * не знает) — тогда это неделёная запись и `streamId` равен `vodId`.
+   */
+  streamId?: string;
+  /** Начало отрезка от начала эфира. Нет у прежней программы — тогда 0. */
+  partStartSeconds?: number;
   /** Имя прогона бокса: из него складывается имя инстанса разбора. */
   runId: string;
   title: string;
@@ -22,6 +31,8 @@ export interface IngestReadyBody {
 
 export interface IngestFailedBody {
   vodId: string;
+  /** Как у сигнала готовности: нет у прежней программы. */
+  streamId?: string;
   failed: true;
   code: string;
   message: string;
@@ -90,19 +101,19 @@ async function goneForGood(services: Services, vodId: string): Promise<boolean> 
  * `processing` всегда, и по одному этому нельзя отличить первый вызов от
  * повторного.
  *
- * Имя прогона обязательно: по одному только vodId повторный разбор записи
+ * Имя прогона обязательно: по одному только идентификатору записи повторный разбор записи
  * упирался бы в имя прошлого — оно занято навсегда, метода удаления инстанса
  * в API Workers нет. Из-за этого не работали ни повтор после сбоя, ни
  * повторный разбор вручную: сигнал приходил, а разбор молча не начинался.
  */
-function workflowInstanceId(vodId: string, runId: string): string {
-  return `ingest-${vodId}-${runId}`;
+function workflowInstanceId(streamId: string, runId: string): string {
+  return `ingest-${streamId}-${runId}`;
 }
 
 /** Начался ли разбор этого захода. */
-async function instanceStarted(env: Env, vodId: string, runId: string): Promise<boolean> {
+async function instanceStarted(env: Env, streamId: string, runId: string): Promise<boolean> {
   try {
-    await env.INGEST.get(workflowInstanceId(vodId, runId));
+    await env.INGEST.get(workflowInstanceId(streamId, runId));
     return true;
   } catch {
     // Нет разбора — нет и запоздания: обычный отказ, его и применяем.
@@ -130,6 +141,7 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
   const body = await parseBody(request);
 
   if (isFailure(body)) {
+    const { streamId, vodId } = identify(body);
     // Пропуск без возврата — только для того, что не изменится: запись
     // закрыта для подписчиков, удалена или недоступна из этого региона
     // (FR-006). Сбой скачивания временный: пометив его пропуском, мы
@@ -142,43 +154,46 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
     // и в проверке не нуждаются.
     const permanent =
       body.code === "not_found"
-        ? await goneForGood(services, body.vodId)
+        ? await goneForGood(services, vodId)
         : PERMANENT_FAILURES.has(body.code);
     const status = permanent ? "skipped" : "failed";
     // Присланное боксом сообщение остаётся в журнале: в реестр идёт своя
     // фраза, потому что реестр читается публичным токеном.
-    console.error(`[разбор ${body.vodId}] отказ бокса ${body.code}: ${body.message}`);
+    console.error(`[разбор ${streamId}] отказ бокса ${body.code}: ${body.message}`);
 
     // Отказ, пришедший после того, как разбор этого же захода уже начался, —
     // запоздавший: это тот заход, у которого не дошёл ответ на сигнал
     // готовности. Помечать запись отказавшей нельзя: разбор идёт, а помеченная
     // запись попадёт под автоматический повтор и пойдёт второй раз (FR-029).
-    if (body.runId !== undefined && (await instanceStarted(env, body.vodId, body.runId))) {
-      console.error(`[разбор ${body.vodId}] отказ захода ${body.runId} запоздал — разбор уже идёт`);
-      return Response.json({ vodId: body.vodId, status: "processing" });
+    if (body.runId !== undefined && (await instanceStarted(env, streamId, body.runId))) {
+      console.error(`[разбор ${streamId}] отказ захода ${body.runId} запоздал — разбор уже идёт`);
+      return Response.json({ streamId, vodId, status: "processing" });
     }
 
-    await services.registry.patchStream(body.vodId, {
+    await services.registry.patchStream(streamId, {
       status,
       reason: FAILURE_REASONS[body.code] ?? UNKNOWN_FAILURE_REASON,
       processedAt: nowUnix(),
     });
-    return Response.json({ vodId: body.vodId, status });
+    return Response.json({ streamId, vodId, status });
   }
 
   const payload = body as IngestReadyBody;
   if (payload.vodId === undefined || payload.vodId === "") {
     throw new AppError("invalid_input", "В сигнале прогона нет vodId.");
   }
+  const { streamId, vodId } = identify(payload);
   const runId = requireRunId(payload.runId);
 
-  const existing = await services.registry.getStream(payload.vodId);
+  const existing = await services.registry.getStream(streamId);
 
   // Заголовок из сигнала бокса в разбор не передаётся: он не участвует ни в
   // документе, ни в имени (FR-027) и остаётся служебным полем реестра.
   const params: IngestParams = {
-    vodId: payload.vodId,
-    url: `https://www.twitch.tv/videos/${payload.vodId}`,
+    streamId,
+    vodId,
+    partStartSeconds: 0,
+    url: `https://www.twitch.tv/videos/${vodId}`,
     publishedAt: payload.publishedAt,
     durationSeconds: payload.durationSeconds,
     categories: payload.categories,
@@ -187,7 +202,7 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
 
   let instanceId: string;
   try {
-    const instance = await env.INGEST.create({ id: workflowInstanceId(payload.vodId, runId), params });
+    const instance = await env.INGEST.create({ id: workflowInstanceId(streamId, runId), params });
     instanceId = instance.id;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -195,7 +210,7 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
       // Не про занятый id — настоящий сбой, а не повтор сигнала.
       throw new AppError("upstream_unavailable", "Не удалось создать инстанс разбора.", { cause: error });
     }
-    return Response.json({ vodId: payload.vodId, status: "processing" });
+    return Response.json({ streamId, vodId, status: "processing" });
   }
 
   // Реестр трогается только после того, как разбор действительно создан:
@@ -203,10 +218,11 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
   // повторный сигнал, случившийся после успеха, иначе возвращал бы готовую
   // запись обратно в `processing` и поднимал бы число попыток.
   await services.registry.putStream({
-    vodId: payload.vodId,
+    streamId,
+    vodId,
     status: "processing",
     title: payload.title,
-    url: `https://www.twitch.tv/videos/${payload.vodId}`,
+    url: `https://www.twitch.tv/videos/${vodId}`,
     publishedAt: payload.publishedAt,
     publishedAtUnix: Math.floor(new Date(payload.publishedAt).getTime() / 1000),
     durationSeconds: payload.durationSeconds,
@@ -219,7 +235,23 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
     processedAt: nowUnix(),
   });
 
-  return Response.json({ vodId: payload.vodId, status: "processing", instanceId }, { status: 202 });
+  return Response.json({ streamId, vodId, status: "processing", instanceId }, { status: 202 });
+}
+
+/**
+ * Какая запись реестра и какая запись площадки стоят за сигналом.
+ *
+ * Идентификатор из сигнала проходит ту же проверку, что и везде, а его номер
+ * записи обязан совпасть с полем `vodId`: иначе сигнал мог бы указать одну
+ * запись площадки, а лечь в реестр под чужим ключом.
+ */
+function identify(body: { vodId: string; streamId?: string }): { streamId: string; vodId: string } {
+  const streamId = body.streamId ?? body.vodId;
+  const parsed = parseStreamId(streamId);
+  if (parsed.vodId !== body.vodId) {
+    throw new AppError("invalid_input", "Идентификатор записи в сигнале не совпадает с номером записи.");
+  }
+  return { streamId, vodId: parsed.vodId };
 }
 
 function nowUnix(): number {

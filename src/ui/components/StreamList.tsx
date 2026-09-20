@@ -19,10 +19,10 @@ import type { IngestOutcome } from "../lib/owner.ts";
 import { listStreams, type StreamSummary } from "../lib/registry.ts";
 
 interface StreamListProps {
-  onOpen: (vodId: string) => void;
-  onDelete?: (vodId: string) => Promise<void>;
+  onOpen: (streamId: string) => void;
+  onDelete?: (streamId: string) => Promise<void>;
   /** Возвращает исход: запись могла уйти в разбор, а могла и не подлежать ему. */
-  onReparse?: (vodId: string) => Promise<IngestOutcome>;
+  onReparse?: (streamId: string) => Promise<IngestOutcome>;
   /** Растёт при внешнем изменении реестра (после добавления/удаления) — заставляет перечитать список. */
   refreshToken?: number;
 }
@@ -37,13 +37,13 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
    * его целиком из-за отказа, скажем, повторного разбора, который идёт прямо
    * сейчас и отвергнут по правилу FR-030.
    */
-  const [rowError, setRowError] = useState<{ vodId: string; text: string } | undefined>(undefined);
+  const [rowError, setRowError] = useState<{ streamId: string; text: string } | undefined>(undefined);
   /**
    * Действие прошло, а работы не будет — с причиной. Отдельно от сбоя, потому
    * что сбоя нет: запись не взяли в разбор по правилу, и показать её
    * разбираемой значило бы соврать.
    */
-  const [rowNote, setRowNote] = useState<{ vodId: string; text: string } | undefined>(undefined);
+  const [rowNote, setRowNote] = useState<{ streamId: string; text: string } | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,14 +89,14 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
     );
   }
 
-  function failed(vodId: string): React.JSX.Element | null {
-    if (rowError === undefined || rowError.vodId !== vodId) return null;
+  function failed(streamId: string): React.JSX.Element | null {
+    if (rowError === undefined || rowError.streamId !== streamId) return null;
     return <p className="text-sm text-destructive">{rowError.text}</p>;
   }
 
   /** Исход действия, при котором работы не будет: причина, а не ошибка. */
-  function noted(vodId: string): React.JSX.Element | null {
-    if (rowNote === undefined || rowNote.vodId !== vodId) return null;
+  function noted(streamId: string): React.JSX.Element | null {
+    if (rowNote === undefined || rowNote.streamId !== streamId) return null;
     return <p className="text-sm text-muted-foreground">{rowNote.text}</p>;
   }
 
@@ -107,26 +107,26 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
         onOpen={onOpen}
         {...(onReparse === undefined ? {} : { onReparse })}
         {...(onDelete === undefined ? {} : { onDelete })}
-        onFailed={(vodId, text) => {
+        onFailed={(streamId, text) => {
           setRowNote(undefined);
-          setRowError({ vodId, text });
+          setRowError({ streamId, text });
         }}
-        onNote={(vodId, text) => {
+        onNote={(streamId, text) => {
           setRowError(undefined);
-          setRowNote({ vodId, text });
+          setRowNote({ streamId, text });
         }}
-        onDone={(vodId, outcome) => {
+        onDone={(streamId, outcome) => {
           setRowError(undefined);
           setRowNote(undefined);
           setStreams((current) =>
             current === undefined
               ? current
               : outcome === "deleted"
-                ? current.filter((item) => item.vodId !== vodId)
+                ? current.filter((item) => item.streamId !== streamId)
                 : // Разбор принят: запись уходит в «В обработке» до следующего
                   // перечитывания списка.
                   current.map((item) =>
-                    item.vodId === vodId ? { ...item, status: "processing" as const } : item,
+                    item.streamId === streamId ? { ...item, status: "processing" as const } : item,
                   ),
           );
         }}
@@ -147,7 +147,7 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
               ещё нет — она и подписана «без названия» до тех пор, пока имя не
               выработается; рядом стоит дата, и запись остаётся различимой. */}
           {ready.map((stream) => (
-            <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
+            <li key={stream.streamId} className="space-y-2 py-4 first:pt-0">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <p className="font-medium">{documentName(stream) || "Без названия"}</p>
@@ -176,8 +176,8 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
                     ))}
                 </div>
               )}
-              {failed(stream.vodId)}
-              {noted(stream.vodId)}
+              {failed(stream.streamId)}
+              {noted(stream.streamId)}
             </li>
           ))}
         </ul>
@@ -190,7 +190,7 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
           </h3>
           <ul className="divide-y">
             {inProgress.map((stream) => (
-              <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
+              <li key={stream.streamId} className="space-y-2 py-4 first:pt-0">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     {/* Имени у такой записи может не быть вовсе: документ ещё
@@ -205,8 +205,8 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
                   </div>
                   {actions(stream)}
                 </div>
-                {failed(stream.vodId)}
-                {noted(stream.vodId)}
+                {failed(stream.streamId)}
+                {noted(stream.streamId)}
               </li>
             ))}
           </ul>
@@ -220,7 +220,7 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
           </h3>
           <ul className="divide-y">
             {skipped.map((stream) => (
-              <li key={stream.vodId} className="space-y-2 py-4 first:pt-0">
+              <li key={stream.streamId} className="space-y-2 py-4 first:pt-0">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <p className="font-medium text-muted-foreground">{recordLabel(stream)}</p>
@@ -228,8 +228,8 @@ export function StreamList({ onOpen, onDelete, onReparse, refreshToken }: Stream
                   </div>
                   {actions(stream)}
                 </div>
-                {failed(stream.vodId)}
-                {noted(stream.vodId)}
+                {failed(stream.streamId)}
+                {noted(stream.streamId)}
               </li>
             ))}
           </ul>

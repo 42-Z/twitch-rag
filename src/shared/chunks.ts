@@ -11,6 +11,9 @@ import { buildContextLine, chunkSection, type ParsedSection } from "./sections.t
 import type { ChunkToIndex } from "./knowledge.ts";
 
 export interface ChunkSource {
+  /** Запись реестра: ключ кусков в векторной базе. */
+  streamId: string;
+  /** Номер записи на площадке: по нему строится ссылка на момент эфира. */
   vodId: string;
   publishedAt: string;
 }
@@ -39,11 +42,12 @@ export function buildChunks(input: BuildChunksInput): Array<Omit<ChunkToIndex, "
 
     for (const chunk of chunkSection(section, contextLine)) {
       result.push({
-        vodId: input.stream.vodId,
+        streamId: input.stream.streamId,
         sectionIndex,
         chunkIndex: chunk.chunkIndex,
         data: chunk.text,
         metadata: {
+          streamId: input.stream.streamId,
           vodId: input.stream.vodId,
           title: input.docTitle,
           publishedAt: input.stream.publishedAt,

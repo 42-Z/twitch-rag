@@ -17,6 +17,7 @@ import type { IngestOutcome } from "../../src/ui/lib/owner.ts";
  */
 function summary(status: StreamSummary["status"], overrides: Partial<StreamSummary> = {}): StreamSummary {
   return {
+    streamId: "2875806701",
     vodId: "2875806701",
     status,
     title: "РАССКАЗЫВАЮ ИСТОРИИ И ЧЁ-ТА ДЕЛАЮ // !донат !приватка",

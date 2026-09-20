@@ -15,6 +15,13 @@ export interface KnowledgeConfig {
 }
 
 export interface ChunkMetadata {
+  /**
+   * Запись реестра, которой принадлежит кусок: у неделёного эфира равна
+   * `vodId`, у части — `<vodId>-p<номер>`. У векторов, записанных до деления
+   * на части, поля нет — для них `streamId` равен `vodId`.
+   */
+  streamId?: string;
+  /** Номер записи на площадке: по нему строится ссылка на момент эфира. */
   vodId: string;
   /** Имя документа, выработанное по содержанию эфира (FR-025, FR-027). */
   title: string;
@@ -32,7 +39,7 @@ export interface ChunkMetadata {
 }
 
 export interface ChunkToIndex {
-  vodId: string;
+  streamId: string;
   sectionIndex: number;
   chunkIndex: number;
   /** Текст куска вместе с контекстной строкой — как он ушёл в эмбеддинг. */
@@ -55,14 +62,18 @@ export interface FoundSection {
   text: string;
   score: number;
   category: string;
-  stream: { vodId: string; title: string; publishedAt: string; url: string };
+  stream: { streamId: string; vodId: string; title: string; publishedAt: string; url: string };
   startSeconds: number;
   endSeconds: number;
 }
 
-/** `<vodId>:<sectionIndex>:<chunkIndex>` — префикс позволяет снести трансляцию одной операцией. */
-export function chunkId(vodId: string, sectionIndex: number, chunkIndex: number): string {
-  return `${vodId}:${sectionIndex}:${chunkIndex}`;
+/**
+ * `<streamId>:<sectionIndex>:<chunkIndex>` — префикс позволяет снести запись одной
+ * операцией. Двоеточие после идентификатора отделяет `123:` от `123-p2:`: префиксы
+ * разных записей друг друга не задевают.
+ */
+export function chunkId(streamId: string, sectionIndex: number, chunkIndex: number): string {
+  return `${streamId}:${sectionIndex}:${chunkIndex}`;
 }
 
 export class Knowledge {
@@ -77,7 +88,7 @@ export class Knowledge {
     try {
       await this.index.upsert(
         chunks.map((chunk) => ({
-          id: chunkId(chunk.vodId, chunk.sectionIndex, chunk.chunkIndex),
+          id: chunkId(chunk.streamId, chunk.sectionIndex, chunk.chunkIndex),
           vector: chunk.vector,
           data: chunk.data,
           metadata: { ...chunk.metadata },
@@ -115,7 +126,8 @@ export class Knowledge {
       const metadata = match.metadata as unknown as ChunkMetadata | undefined;
       if (metadata === undefined) continue;
 
-      const key = `${metadata.vodId}:${metadata.sectionIndex}`;
+      const streamId = metadata.streamId ?? metadata.vodId;
+      const key = `${streamId}:${metadata.sectionIndex}`;
       const existing = bySection.get(key);
       if (existing !== undefined && existing.score >= match.score) continue;
 
@@ -126,6 +138,7 @@ export class Knowledge {
         score: match.score,
         category: metadata.category,
         stream: {
+          streamId,
           vodId: metadata.vodId,
           title: metadata.title,
           publishedAt: metadata.publishedAt,
@@ -139,10 +152,10 @@ export class Knowledge {
     return [...bySection.values()].sort((a, b) => b.score - a.score).slice(0, options.topK);
   }
 
-  /** Удаление всех кусков трансляции по префиксу идентификатора. */
-  async removeStream(vodId: string): Promise<number> {
+  /** Удаление всех кусков записи по префиксу идентификатора. */
+  async removeStream(streamId: string): Promise<number> {
     try {
-      const result = await this.index.delete({ prefix: `${vodId}:` });
+      const result = await this.index.delete({ prefix: `${streamId}:` });
       return result.deleted;
     } catch (error) {
       throw upstreamError("векторная база", error);
@@ -159,7 +172,7 @@ export class Knowledge {
    * что метаданные кусков прошлых разборов не несут ни признака прогона, ни
    * чего-либо ещё, по чему их можно отличить фильтром.
    */
-  async removeExcept(vodId: string, keep: ReadonlySet<string>): Promise<number> {
+  async removeExcept(streamId: string, keep: ReadonlySet<string>): Promise<number> {
     const stale: string[] = [];
     // Курсор — строка, и первый запрос идёт с "0": так это описано в
     // справочнике по точке `range`. Пустая строка в ответе означает, что
@@ -172,7 +185,7 @@ export class Knowledge {
         const page: { nextCursor: string; vectors: Array<{ id: string }> } = await this.index.range({
           cursor,
           limit: 100,
-          prefix: `${vodId}:`,
+          prefix: `${streamId}:`,
         });
         for (const vector of page.vectors) {
           if (!keep.has(vector.id)) stale.push(vector.id);
@@ -199,7 +212,7 @@ export class Knowledge {
    * записывается обратно с изменённым полем. Обход при этом не сбивается:
    * в отличие от удаления, обновление не сдвигает страницы под собой.
    */
-  async renameStream(vodId: string, title: string): Promise<number> {
+  async renameStream(streamId: string, title: string): Promise<number> {
     let renamed = 0;
     let cursor = "0";
     try {
@@ -210,7 +223,7 @@ export class Knowledge {
         } = await this.index.range({
           cursor,
           limit: 100,
-          prefix: `${vodId}:`,
+          prefix: `${streamId}:`,
           includeMetadata: true,
         });
         for (const vector of page.vectors) {

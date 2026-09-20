@@ -81,8 +81,8 @@ const ROUTES: Route[] = [
 
   {
     method: "GET",
-    pattern: "/api/streams/:vodId/document",
-    handler: (_request, env, params) => handleGetDocument(params.vodId ?? "", createServices(env)),
+    pattern: "/api/streams/:streamId/document",
+    handler: (_request, env, params) => handleGetDocument(params.streamId ?? "", createServices(env)),
   },
 
   {
@@ -93,16 +93,16 @@ const ROUTES: Route[] = [
 
   {
     method: "POST",
-    pattern: "/api/streams/:vodId/reparse",
+    pattern: "/api/streams/:streamId/reparse",
     handler: (request, env, params) =>
-      handleReparseStream(params.vodId ?? "", request, env, createServices(env), originOf(request)),
+      handleReparseStream(params.streamId ?? "", request, env, createServices(env), originOf(request)),
   },
 
   {
     method: "DELETE",
-    pattern: "/api/streams/:vodId",
+    pattern: "/api/streams/:streamId",
     handler: (request, env, params) =>
-      handleDeleteStream(params.vodId ?? "", request, env, createServices(env)),
+      handleDeleteStream(params.streamId ?? "", request, env, createServices(env)),
   },
 
   {
