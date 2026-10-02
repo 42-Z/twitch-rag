@@ -1,9 +1,9 @@
 /**
  * Точка входа прогона в боксе.
  *
- * Бокс делает ровно то, что невозможно в изоляте V8: скачивает запись и режет
- * звук. Ни векторной базы, ни документов он не знает — выкладывает куски и
- * сообщает Worker, что можно начинать.
+ * Бокс делает ровно то, что невозможно в изоляте V8: скачивает запись, режет
+ * звук и снимает кадры эфира. Ни векторной базы, ни документов он не знает —
+ * выкладывает куски и кадры и сообщает Worker, что можно начинать.
  *
  * Запускается откреплённым, поэтому о любом исходе обязан сообщить сам:
  * молча умерший прогон оставил бы запись висеть в состоянии «разбирается».
@@ -14,7 +14,9 @@ import path from "node:path";
 import { readMediaInfo, MediaUnavailableError, classifyFailure, clipChapters } from "./media.ts";
 import { cutAudio, absoluteChunks } from "./segment.ts";
 import { Publisher, audioKey } from "./publish.ts";
+import { collectFrames, createFrameIo, describeError } from "./frames.ts";
 import { parseArgs } from "./args.ts";
+import type { Frame } from "../shared/frames.ts";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -52,6 +54,31 @@ async function main(): Promise<void> {
     if (chunks.length === 0) throw new Error("нарезка не дала ни одного куска");
 
     await publisher.uploadChunks(args.streamId, workDir, chunks);
+
+    // Кадры — добавка к звуку: любая их неудача даёт пустой список, а не отказ
+    // прогона. Сигнал готовности уходит в любом случае, а Worker разбирает эфир
+    // по речи и говорит в записи, сколько осталось без кадров.
+    let frames: Frame[] = [];
+    if (info.frameSource !== undefined) {
+      try {
+        const collected = await collectFrames({
+          source: info.frameSource,
+          range: { startSeconds: fromSeconds, endSeconds: toSeconds },
+          io: createFrameIo({
+            upload: (atSeconds, bytes) => publisher.uploadFrame(args.streamId, atSeconds, bytes),
+            sign: (key) => publisher.signFrameUrl(key),
+          }),
+          log: (message) => console.error(message),
+        });
+        frames = collected.frames;
+        console.log(`кадров: ${collected.frames.length} из ${collected.planned}`);
+      } catch (error) {
+        console.error(`кадры не добыты: ${describeError(error)}`);
+      }
+    } else {
+      console.log("кадров: нет видеодорожки");
+    }
+
     await publisher.notifyReady(args.callbackUrl, secret, {
       streamId: args.streamId,
       vodId: args.vodId,
@@ -68,6 +95,7 @@ async function main(): Promise<void> {
         offsetSeconds: chunk.offsetSeconds,
         durationSeconds: chunk.durationSeconds,
       })),
+      frames,
     });
     console.log(`готово: ${chunks.length} кусков для ${args.streamId}`);
   } catch (error) {

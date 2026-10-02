@@ -14,6 +14,12 @@ export interface Chapter {
   endSeconds: number;
 }
 
+/** Откуда брать кадры: плейлист видеодорожки и её высота. */
+export interface FrameSource {
+  playlistUrl: string;
+  height: number;
+}
+
 export interface MediaInfo {
   title: string;
   durationSeconds: number;
@@ -21,7 +27,21 @@ export interface MediaInfo {
   publishedAt: string;
   /** Категории с временными границами — они же главы записи. */
   chapters: Chapter[];
+  /** Нет у записи без видео: кадров тогда нет, а звук берётся как раньше. */
+  frameSource?: FrameSource;
 }
+
+/** Поля формата из `yt-dlp --dump-json`, по которым выбирается источник кадров. */
+export interface RawFormat {
+  format_id?: string;
+  protocol?: string;
+  height?: number | null;
+  vcodec?: string | null;
+  url?: string;
+}
+
+/** Выше этой высоты сегмент вдвое тяжелее, а модели всё равно уходит 1280 px. */
+const FRAME_SOURCE_MAX_HEIGHT = 720;
 
 /** Причина, по которой запись не будет разобрана, — текстом для человека. */
 export interface Unavailable {
@@ -47,9 +67,11 @@ export async function readMediaInfo(url: string): Promise<MediaInfo> {
     timestamp?: number;
     upload_date?: string;
     chapters?: Array<{ title?: string; start_time?: number; end_time?: number }> | null;
+    formats?: RawFormat[] | null;
   };
 
   const duration = Math.round(raw.duration ?? 0);
+  const frameSource = pickFrameSource(raw.formats ?? []);
   const chapters = (raw.chapters ?? [])
     .map((chapter) => ({
       title: (chapter.title ?? "").trim(),
@@ -64,7 +86,34 @@ export async function readMediaInfo(url: string): Promise<MediaInfo> {
     publishedAt: publishedAtOf(raw),
     // Эфир без смен категории глав не имеет — тогда категория одна на всю запись.
     chapters: chapters.length > 0 ? chapters : [{ title: "", startSeconds: 0, endSeconds: duration }],
+    ...(frameSource === undefined ? {} : { frameSource }),
   };
+}
+
+/**
+ * Источник кадров из форматов записи: плейлист HLS (`m3u8_native`) с видео.
+ *
+ * Берётся наибольшая высота не выше 720, а если таких нет — наименьшая выше.
+ * Звук без видео и раскадровка площадки (`mhtml`, 160×90: текст не читается)
+ * не годятся. Подходящих нет — кадров нет, и это не отказ: документ пишется по
+ * речи. При равной высоте берётся формат, который `yt-dlp` называет позже: он
+ * перечисляет форматы от худшего к лучшему (описание `formats` в
+ * `yt_dlp/extractor/common.py`: «ordered from worst to best quality»).
+ */
+export function pickFrameSource(formats: readonly RawFormat[]): FrameSource | undefined {
+  const candidates: FrameSource[] = [];
+  for (const format of formats) {
+    if (format.protocol !== "m3u8_native") continue;
+    if (typeof format.url !== "string" || format.url === "") continue;
+    if (typeof format.height !== "number" || !(format.height > 0)) continue;
+    if (format.vcodec === "none") continue;
+    candidates.push({ playlistUrl: format.url, height: format.height });
+  }
+
+  // Сортировка устойчивая: равные по высоте остаются в порядке списка.
+  const byHeight = candidates.sort((a, b) => a.height - b.height);
+  const fitting = byHeight.filter((candidate) => candidate.height <= FRAME_SOURCE_MAX_HEIGHT);
+  return fitting.length > 0 ? fitting.at(-1) : byHeight[0];
 }
 
 /**
