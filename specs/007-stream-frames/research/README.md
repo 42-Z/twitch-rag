@@ -24,15 +24,21 @@ node --env-file=.env specs/007-stream-frames/research/scripts/measure-frames.ts 
 node specs/007-stream-frames/research/scripts/measure-frames.ts \
   --check specs/007-stream-frames/research/data/control-places.json --docs 2875806701-1200-5400-run1
 
-# 4. Нарисованные кадры с секретами и приказами среди настоящих (SC-005, SC-006)
+# 4. Нарисованные кадры с секретами и приказами среди настоящих (SC-005, SC-006):
+#    сначала рисуются (ffmpeg, шрифт с кириллицей), потом гоняются по одному набору
+node specs/007-stream-frames/research/scripts/draw-probes.ts --frames 2875806701-1200-5400
 node --env-file=.env specs/007-stream-frames/research/scripts/measure-frames.ts \
-  --transcript 2875806701-1200-5400 --frames 2875806701-1200-5400 --probes secrets --tag run1-probes
+  --transcript 2875806701-1200-5400 --frames 2875806701-1200-5400 --probes secrets --tag run1-secrets
+node --env-file=.env specs/007-stream-frames/research/scripts/measure-frames.ts \
+  --transcript 2875806701-1200-5400 --frames 2875806701-1200-5400 --probes orders --tag run1-orders
 ```
 
 Ключи `measure-frames.ts`: `--tag` — метка прогона, чтобы новые файлы не затирали прежние;
 `--part-minutes` — проходы фиксированной длины вместо боевого деления; `--variants base,frames`
 — какие варианты гонять; `--streamer-info` — сведения о стримере (по умолчанию пусто: стенд
-меряет вклад кадров, а не сведений); `--probes` — подмешать нарисованные кадры.
+меряет вклад кадров, а не сведений); `--probes secrets|orders` — десять настоящих кадров
+заменяются нарисованными, гоняется один вариант, с кадрами; печатается, что просочилось, и сколько
+проходов осталось без разделов.
 
 **Стенд повторяет боевой разбор, а не свою копию.** Запрос строит `buildDocumentPartParams`
 из `src/shared/openrouter.ts`: инструкция, схема ответа, рассуждения и умолчания — боевые. Правка
