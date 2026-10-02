@@ -8,7 +8,8 @@ import {
   type FrameIo,
 } from "../../src/pipeline/frames.ts";
 import { pickFrameSource, type RawFormat } from "../../src/pipeline/media.ts";
-import { FRAME_URL_TTL_SECONDS, Publisher } from "../../src/pipeline/publish.ts";
+import { FRAME_URL_TTL_SECONDS, Publisher, frameKey } from "../../src/pipeline/publish.ts";
+import { FRAMES_PREFIX } from "../../src/shared/frames.ts";
 
 /**
  * Форматы записи `2878430068` как их отдал `yt-dlp --dump-json`: оставлены поля,
@@ -359,5 +360,41 @@ describe("ссылка на кадр", () => {
     // Подпись в адресе, а не в заголовках: модель скачивает по голой ссылке.
     expect(url.searchParams.get("X-Amz-Signature")).toMatch(/^[0-9a-f]{64}$/);
     expect(url.searchParams.get("X-Amz-Credential")).toContain("AKIAEXAMPLE");
+  });
+});
+
+describe("ключ кадра в хранилище", () => {
+  test("ключ определён моментом: тот же кадр — тот же объект, перезапись, а не копия", () => {
+    expect(frameKey("2878430068", 1800)).toBe("frames/2878430068/frame-001800.jpg");
+    expect(frameKey("2878430068", 1800)).toBe(frameKey("2878430068", 1800));
+    // Секунды дополняются нулями до шести знаков: ключи сортируются как время.
+    expect(frameKey("2878430068", 90)).toBe("frames/2878430068/frame-000090.jpg");
+  });
+
+  test("ключ лежит под общим префиксом, по которому Worker убирает кадры", () => {
+    // Раскладку задаёт бокс, а убирает Worker: если они разойдутся, кадры
+    // останутся в хранилище с лицами и никами. Префикс общий (`FRAMES_PREFIX`),
+    // а что уборка Worker им пользуется, проверяет `tests/worker/temporary.test.ts`.
+    expect(FRAMES_PREFIX).toBe("frames/");
+    expect(frameKey("2878430068", 1800).startsWith(`${FRAMES_PREFIX}2878430068/`)).toBe(true);
+  });
+
+  test("уборка части не задевает соседнюю запись, и наоборот", () => {
+    // Уборка идёт по `<префикс><идентификатор>/`: слэш отделяет `frames/123/` от `frames/123-p2/`.
+    const whole = frameKey("2878430068", 1800);
+    const part = frameKey("2878430068-p2", 1800);
+    const underFrames = (id: string) => (key: string) => key.startsWith(`frames/${id}/`);
+
+    expect(underFrames("2878430068")(part)).toBe(false);
+    expect(underFrames("2878430068-p2")(whole)).toBe(false);
+    expect(underFrames("2878430068")(whole)).toBe(true);
+    expect(underFrames("2878430068-p2")(part)).toBe(true);
+  });
+
+  test("ключ кадра не совпадает с ключами звука и расшифровки той же записи", () => {
+    const key = frameKey("2878430068", 0);
+
+    expect(key.startsWith("audio/")).toBe(false);
+    expect(key.startsWith("transcript/")).toBe(false);
   });
 });

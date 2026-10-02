@@ -48,6 +48,14 @@ export const MAX_FRAMES_PER_PASS = 30;
  */
 export const MAX_FRAME_FALLBACKS = 3;
 
+/**
+ * Каталог кадров в хранилище аудио: `frames/<streamId>/…`. Кадры кладёт бокс
+ * (`pipeline/publish.ts`), а убирает Worker (`worker/temporary.ts`) — оба берут
+ * префикс отсюда, поэтому раскладка и уборка не могут разойтись: расхождение
+ * оставило бы в хранилище кадры с лицами и никами зрителей.
+ */
+export const FRAMES_PREFIX = "frames/";
+
 /** Изображение экрана эфира в один момент. */
 export interface Frame {
   /**

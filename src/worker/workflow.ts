@@ -25,7 +25,7 @@ import { renderDocumentHeader, Documents } from "../shared/documents.ts";
 import { chunkId } from "../shared/knowledge.ts";
 import { composePart, composePasses } from "../shared/document-parts.ts";
 import { composeReason, formatFramelessNote, framelessSeconds, minPassesForFrames } from "../shared/frames.ts";
-import { removeTemporary } from "./temporary.ts";
+import { removeFrames, removeTemporary } from "./temporary.ts";
 
 /**
  * Сколько знаков расшифровки приходится на один проход.
@@ -78,15 +78,35 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       // а реестр читается публичным токеном — текст ошибки увидел бы любой
       // посетитель страницы.
       console.error(`[разбор ${params.streamId}] ${message}`);
-      if (!isEngineReset(message) && !(await isAlreadyFinished(params.streamId, services))) {
-        // Запись не должна остаться в processing навсегда — её возьмут заново
-        // на следующем опросе (schedule.ts проверяет attempts).
-        await services.registry.patchStream(params.streamId, {
-          status: "failed",
-          reason: FAILURE_REASON,
-        });
+      if (!isEngineReset(message)) {
+        // Кадры, в отличие от аудио, переигровке не нужны: проходы составления
+        // без них не повторяются, а новый заход бокса положит кадры заново.
+        // Оставлять на кадрах лица и ники зрителей до суточной уборки незачем.
+        await this.dropFrames(params.streamId);
+        if (!(await isAlreadyFinished(params.streamId, services))) {
+          // Запись не должна остаться в processing навсегда — её возьмут заново
+          // на следующем опросе (schedule.ts проверяет attempts).
+          await services.registry.patchStream(params.streamId, {
+            status: "failed",
+            reason: FAILURE_REASON,
+          });
+        }
       }
       throw error;
+    }
+  }
+
+  /**
+   * Убрать кадры записи после сбоя. Ошибка самой уборки уходит в журнал и не
+   * заслоняет сбой разбора, ради которого вызвана: пометка отказом и исходная
+   * ошибка важнее.
+   */
+  private async dropFrames(streamId: string): Promise<void> {
+    try {
+      await removeFrames(this.env.AUDIO, streamId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(`[разбор ${streamId}] не удалось убрать кадры: ${reason}`);
     }
   }
 

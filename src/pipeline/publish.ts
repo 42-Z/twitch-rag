@@ -11,7 +11,7 @@ import path from "node:path";
 import { AwsClient } from "aws4fetch";
 import type { AudioChunk } from "./segment.ts";
 import type { Chapter } from "./media.ts";
-import type { Frame } from "../shared/frames.ts";
+import { FRAMES_PREFIX, type Frame } from "../shared/frames.ts";
 
 /**
  * Срок ссылки на кадр. Самый длинный разбор идёт заметно меньше часа, шесть
@@ -63,12 +63,12 @@ export function audioKey(streamId: string, index: number): string {
 
 /**
  * Ключ определяется моментом кадра: повторный прогон той же записи
- * перезаписывает те же объекты, а не плодит копии. Префикс `frames/` входит в
- * перечень временного на стороне Worker (`worker/temporary.ts`) — по нему
- * кадры убираются после разбора.
+ * перезаписывает те же объекты, а не плодит копии. Префикс общий с уборкой
+ * Worker (`FRAMES_PREFIX` — `worker/temporary.ts` убирает по нему кадры после
+ * разбора).
  */
 export function frameKey(streamId: string, atSeconds: number): string {
-  return `frames/${streamId}/frame-${String(atSeconds).padStart(6, "0")}.jpg`;
+  return `${FRAMES_PREFIX}${streamId}/frame-${String(atSeconds).padStart(6, "0")}.jpg`;
 }
 
 /** Повтор сорвавшегося действия: звук и кадры ходят в R2 по одним правилам. */
