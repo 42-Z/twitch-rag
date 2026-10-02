@@ -318,6 +318,35 @@ export function readDocumentNameChoice(choice: CompletionChoice | undefined): st
   return name;
 }
 
+/**
+ * Статусы, при которых виноваты не кадры: ключ, деньги, срок ответа, частота.
+ * Повтор без кадров их не лечит.
+ */
+const NOT_FRAMES_STATUSES = new Set([401, 402, 408, 429]);
+
+/**
+ * Отказала ли модель из-за кадров: запрос с кадрами закончился отказом модели
+ * (`model_refused`) либо ответом 4xx, кроме 401, 402, 408 и 429.
+ *
+ * Разбор по классу ответа, а не по типу ошибки: документированные типы
+ * (`image_download_failed`, `invalid_image`…) живые ответы OpenRouter не несут —
+ * там `400 Provider returned error` с кодом провайдера, а для мусорной картинки
+ * и вовсе без кода (`research.md` §6). Если причина была не в кадрах (скажем,
+ * превышен контекст), повтор без них упадёт так же, и ошибка уйдёт наверх как
+ * раньше: цена ошибки в классификации — одно лишнее обращение.
+ *
+ * Статус берётся у причины, а не у самой ошибки: у `AppError` свой `status` —
+ * он зависит от кода (`invalid_input` — 400) и о ответе модели ничего не говорит.
+ * Обрыв соединения, 5xx и 408 SDK повторяет сам, до этого места они не доходят.
+ */
+export function isFramesRejection(error: unknown): boolean {
+  if (error instanceof AppError && error.code === "model_refused") return true;
+
+  const source: unknown = error instanceof AppError ? error.cause : error;
+  const status = typeof source === "object" && source !== null ? (source as { status?: unknown }).status : undefined;
+  return typeof status === "number" && status >= 400 && status < 500 && !NOT_FRAMES_STATUSES.has(status);
+}
+
 /** Общая часть разбора: отказ модели, обрыв по потолку и ответ без вариантов. */
 function requireMessage(choice: CompletionChoice | undefined): { refusal?: string | null; content?: string | null } {
   if (choice === undefined) {

@@ -3,7 +3,10 @@ import {
   FRAME_INTERVAL_SECONDS,
   MAX_FRAMES_PER_PASS,
   MAX_FRAMES_PER_REQUEST,
+  composeReason,
+  formatFramelessNote,
   frameWindows,
+  framelessSeconds,
   framesInRange,
   limitFrames,
   minPassesForFrames,
@@ -183,5 +186,106 @@ describe("число проходов по кадрам", () => {
     // длиннее среднего (research.md §7); 45 всё ещё ниже предела запроса.
     expect(MAX_FRAMES_PER_PASS * 1.5).toBeLessThan(MAX_FRAMES_PER_REQUEST);
     expect(Math.ceil(120 / minPassesForFrames(120))).toBeLessThanOrEqual(MAX_FRAMES_PER_PASS);
+  });
+});
+
+describe("сколько эфира без кадров", () => {
+  const stream = { startSeconds: 0, endSeconds: 20789 };
+  /** По кадру в каждом окне — на целой секунде не раньше начала окна. */
+  const onePerWindow = (range = stream): Frame[] =>
+    frameWindows(range).map((window) => frame(Math.ceil(window.startSeconds)));
+
+  test("все окна покрыты — ноль, пометки нет", () => {
+    expect(framelessSeconds(stream, onePerWindow())).toBe(0);
+  });
+
+  test("кадров нет вовсе — вся длина отрезка", () => {
+    // Прежний конвейер, запись без видео, сбой добычи: для документа это одно и то же.
+    expect(framelessSeconds(stream, [])).toBe(20789);
+    expect(framelessSeconds(stream, [], [])).toBe(20789);
+  });
+
+  test("не добыты три кадра из 115 — сумма длин их окон", () => {
+    const frames = onePerWindow().filter((_, index) => ![10, 50, 100].includes(index));
+
+    expect(frames).toHaveLength(112);
+    // 3 × 20 789 ÷ 115 = 542,32
+    expect(framelessSeconds(stream, frames)).toBe(542);
+  });
+
+  test("проход откатился — окна его участка непокрыты, хотя кадры в них были", () => {
+    // Окна 20…39 лежат внутри 3 600–7 200; их кадры документ не видел.
+    // 20 × 20 789 ÷ 115 = 3 615,48
+    expect(framelessSeconds(stream, onePerWindow(), [{ startSeconds: 3600, endSeconds: 7200 }])).toBe(3615);
+  });
+
+  test("откат и недобытые кадры складываются без двойного счёта", () => {
+    const frames = onePerWindow();
+    // Окно 26 лежит внутри откатившегося участка, и кадра в нём к тому же нет:
+    // оно непокрыто и считается один раз, а не дважды.
+    const withoutOne = frames.filter((_, index) => index !== 26);
+
+    expect(framelessSeconds(stream, withoutOne, [{ startSeconds: 3600, endSeconds: 7200 }])).toBe(3615);
+  });
+
+  test("участок отката без кадров ничего не добавляет", () => {
+    // Откатился участок, в котором кадров и не было: окна там уже непокрыты.
+    const frames = onePerWindow().filter((_, index) => index < 20 || index > 39);
+
+    expect(framelessSeconds(stream, frames, [{ startSeconds: 3600, endSeconds: 7200 }])).toBe(3615);
+  });
+
+  test("кадр на границе окон относится к одному окну", () => {
+    const range = { startSeconds: 0, endSeconds: 360 };
+
+    // 180 — начало второго окна: первое остаётся без кадра.
+    expect(framelessSeconds(range, [frame(180)])).toBe(180);
+    // 179 — последняя секунда первого окна: без кадра остаётся второе.
+    expect(framelessSeconds(range, [frame(179)])).toBe(180);
+  });
+
+  test("кадр вне отрезка окна не покрывает", () => {
+    expect(framelessSeconds({ startSeconds: 0, endSeconds: 360 }, [frame(5000)])).toBe(360);
+  });
+
+  test("конец участка отката не включается: кадр на нём остаётся видимым", () => {
+    const range = { startSeconds: 0, endSeconds: 21600 };
+    const frames = onePerWindow(range);
+
+    // Кадры на 3 600 … 7 020 потеряны (20 окон по 180 с), кадр на 7 200 — уже за участком.
+    expect(framelessSeconds(range, frames, [{ startSeconds: 3600, endSeconds: 7200 }])).toBe(3600);
+  });
+
+  test("часть эфира считается от своего начала", () => {
+    const part = { startSeconds: 21600, endSeconds: 43200 };
+
+    expect(framelessSeconds(part, [])).toBe(21600);
+    expect(framelessSeconds(part, onePerWindow(part))).toBe(0);
+  });
+});
+
+describe("пометка о кадрах в записи", () => {
+  test.each([
+    [2400, "Без кадров: 40 мин эфира."],
+    [20789, "Без кадров: 5 ч 46 мин эфира."],
+    [20, "Без кадров: меньше минуты эфира."],
+    [0, ""],
+  ])("%i с — «%s»", (seconds, note) => {
+    expect(formatFramelessNote(seconds)).toBe(note);
+  });
+
+  test("причина собирается из двух пометок через пробел", () => {
+    expect(composeReason("Разделы не покрывают 12 мин эфира.", "Без кадров: 40 мин эфира.")).toBe(
+      "Разделы не покрывают 12 мин эфира. Без кадров: 40 мин эфира.",
+    );
+  });
+
+  test("одна пометка — без лишних пробелов", () => {
+    expect(composeReason("", "Без кадров: 40 мин эфира.")).toBe("Без кадров: 40 мин эфира.");
+    expect(composeReason("Разделы не покрывают 12 мин эфира.", "")).toBe("Разделы не покрывают 12 мин эфира.");
+  });
+
+  test("нечего сказать — пустая строка, чтобы не висела причина прошлой попытки", () => {
+    expect(composeReason("", "")).toBe("");
   });
 });

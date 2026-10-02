@@ -23,8 +23,8 @@ import { normalizeSections, type ParsedSection } from "../shared/sections.ts";
 import { buildChunks } from "../shared/chunks.ts";
 import { renderDocumentHeader, Documents } from "../shared/documents.ts";
 import { chunkId } from "../shared/knowledge.ts";
-import { composePart } from "../shared/document-parts.ts";
-import { minPassesForFrames } from "../shared/frames.ts";
+import { composePart, composePasses } from "../shared/document-parts.ts";
+import { composeReason, formatFramelessNote, framelessSeconds, minPassesForFrames } from "../shared/frames.ts";
 import { removeTemporary } from "./temporary.ts";
 
 /**
@@ -207,25 +207,36 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     };
     const parts = planDocumentParts(range, params.categories, partCount);
 
-    const written: ParsedSection[] = [];
-    for (const [index, part] of parts.entries()) {
-      const composed = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () => {
+    // Шаг называется иначе, чем до кадров («написать часть»): результат шага
+    // теперь не список разделов, а разделы с участками без кадров. Разбор,
+    // идущий в момент выпуска, не должен подхватить прежний результат под
+    // новым видом — его проходы просто составятся заново.
+    const composed = await composePasses({
+      parts,
+      frames,
+      stepName: (index, count) => `составить часть ${index + 1} из ${count}`,
+      step: (name, run) => step.do(name, run),
+      compose: async ({ part, frames: passFrames, fallbacksLeft }) => {
         const object = await this.env.AUDIO.get(transcriptFullKey(params.streamId));
         if (object === null) throw new Error("склеенная расшифровка исчезла из хранилища");
-        return await composePart(services.models, {
-          transcript: await object.text(),
-          part,
-          publishedAt: params.publishedAt,
-          categories: params.categories,
-          streamerInfo,
-          frames,
-          // Ключ закрепления за провайдером на всю запись: проходы одной
-          // записи должны попадать на тот же узел, иначе кэш входа не сработает.
-          sessionId: params.streamId,
-        });
-      });
-      written.push(...composed.map((section) => ({ ...section, category: "" })));
-    }
+        return await composePart(
+          services.models,
+          {
+            transcript: await object.text(),
+            part,
+            publishedAt: params.publishedAt,
+            categories: params.categories,
+            streamerInfo,
+            frames: passFrames,
+            // Ключ закрепления за провайдером на всю запись: проходы одной
+            // записи должны попадать на тот же узел, иначе кэш входа не сработает.
+            sessionId: params.streamId,
+          },
+          { fallbacksLeft },
+        );
+      },
+    });
+    const written: ParsedSection[] = composed.sections.map((section) => ({ ...section, category: "" }));
 
     // --- разделы ---
     // Не шагом. Результат шага площадка хранит в состоянии экземпляра, и его
@@ -323,7 +334,11 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
         // разобранной записи остаётся висеть причина отказа прошлой попытки.
         // В пометке именно длительность: «один участок» может означать и
         // минуту тишины, и четыре часа потерянного эфира.
-        reason: gaps.length > 0 ? `Разделы не покрывают ${formatGaps(gaps)} эфира.` : "",
+        // Вторая пометка — сколько эфира документ писался без кадров (FR-015).
+        reason: composeReason(
+          gaps.length > 0 ? `Разделы не покрывают ${formatGaps(gaps)} эфира.` : "",
+          formatFramelessNote(framelessSeconds(range, frames, composed.withoutFrames)),
+        ),
       });
     });
 

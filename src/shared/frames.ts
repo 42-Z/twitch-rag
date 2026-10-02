@@ -13,6 +13,7 @@
  */
 
 import type { TimeRange } from "./categories.ts";
+import { formatDuration } from "./time.ts";
 
 /**
  * Один кадр на столько секунд эфира (FR-002). Единственное место значения:
@@ -128,4 +129,45 @@ export function limitFrames(frames: readonly Frame[], max: number = MAX_FRAMES_P
 export function minPassesForFrames(frameCount: number): number {
   if (frameCount <= 0) return 0;
   return Math.ceil(frameCount / MAX_FRAMES_PER_PASS);
+}
+
+/**
+ * Сколько эфира осталось без кадров: сумма длин окон, которые не покрыты (FR-015).
+ *
+ * Окно покрыто, если в нём есть кадр и этот кадр не лежит ни в одном из
+ * `withoutFrames` — участков, которые проход переписал без кадров после отказа
+ * модели: кадр там был, но документ его не видел. Кадров нет вовсе (прежний
+ * конвейер, запись без видео, сбой добычи) — не покрыто всё, и результат равен
+ * длине отрезка.
+ */
+export function framelessSeconds(
+  range: TimeRange,
+  frames: readonly Frame[],
+  withoutFrames: readonly TimeRange[] = [],
+): number {
+  const lost = (frame: Frame): boolean =>
+    withoutFrames.some((span) => frame.atSeconds >= span.startSeconds && frame.atSeconds < span.endSeconds);
+
+  let uncovered = 0;
+  for (const window of frameWindows(range)) {
+    const covered = frames.some(
+      (frame) => frame.atSeconds >= window.startSeconds && frame.atSeconds < window.endSeconds && !lost(frame),
+    );
+    if (!covered) uncovered += window.endSeconds - window.startSeconds;
+  }
+  return Math.round(uncovered);
+}
+
+/** «Без кадров: 40 мин эфира.» — пометка для записи; когда нечего сказать, пустая строка. */
+export function formatFramelessNote(seconds: number): string {
+  return seconds > 0 ? `Без кадров: ${formatDuration(seconds)} эфира.` : "";
+}
+
+/**
+ * Причина в записи: пометка о разрывах покрытия и пометка о кадрах через пробел.
+ * Пустые отбрасываются; обе пустые — пустая строка, как и раньше, чтобы на
+ * разобранной записи не висела причина отказа прошлой попытки.
+ */
+export function composeReason(gapsNote: string, framelessNote: string): string {
+  return [gapsNote, framelessNote].filter((note) => note !== "").join(" ");
 }
