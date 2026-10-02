@@ -158,3 +158,58 @@ describe("обрыв по потолку", () => {
     expect(halves).toEqual([0, 0, 0, 0]);
   });
 });
+
+describe("кадры своего участка", () => {
+  const frameAt = (atSeconds: number) => ({ atSeconds, url: `https://example.test/frame-${atSeconds}.jpg` });
+  /** Кадр каждые три минуты по всему часу: 0, 180, … 3420. */
+  const hourOfFrames = Array.from({ length: 20 }, (_, index) => frameAt(index * 180));
+  const seconds = (request: DocumentPartRequest | undefined): number[] =>
+    (request?.frames ?? []).map((frame) => frame.atSeconds);
+
+  test("проход видит только кадры своего участка", async () => {
+    const { composer, seen } = composerWith(() => [section("Тема", 1800, 2700)]);
+
+    await composePart(composer, { ...input, part: { startSeconds: 1800, endSeconds: 2700 }, frames: hourOfFrames });
+
+    expect(seconds(seen[0])).toEqual([1800, 1980, 2160, 2340, 2520]);
+  });
+
+  test("после обрыва по потолку каждая половина получает свои кадры, а не все", async () => {
+    const { composer, seen } = composerWith((request, call) => {
+      if (call === 1) throw new AppError("output_truncated", "обрыв");
+      return [section(`Тема ${call}`, request.part.startSeconds, request.part.endSeconds)];
+    });
+
+    await composePart(composer, { ...input, frames: hourOfFrames });
+
+    // Целый проход видел весь час; первая половина — до середины, вторая — от неё.
+    expect(seconds(seen[0])).toHaveLength(20);
+    expect(seconds(seen[1])).toEqual(hourOfFrames.slice(0, 10).map((frame) => frame.atSeconds));
+    expect(seconds(seen[2])).toEqual(hourOfFrames.slice(10).map((frame) => frame.atSeconds));
+  });
+
+  test("кадр на самой границе середины уходит во вторую половину", async () => {
+    // Середина участка 0–3600 — 1800; кадр на 1800-й секунде принадлежит [1800, 3600).
+    const { composer, seen } = composerWith((request, call) => {
+      if (call === 1) throw new AppError("output_truncated", "обрыв");
+      return [section(`Тема ${call}`, request.part.startSeconds, request.part.endSeconds)];
+    });
+
+    await composePart(composer, { ...input, frames: hourOfFrames });
+
+    expect(seconds(seen[1])).not.toContain(1800);
+    expect(seconds(seen[2])[0]).toBe(1800);
+  });
+
+  test("без кадров запрос не содержит поля frames — он прежний", async () => {
+    const { composer, seen } = composerWith(() => [section("Тема", 0, 3600)]);
+
+    await composePart(composer, input);
+    await composePart(composer, { ...input, frames: [] });
+    // Кадры есть, но все за пределами участка.
+    await composePart(composer, { ...input, part: { startSeconds: 0, endSeconds: 600 }, frames: [frameAt(5000)] });
+
+    expect(seen).toHaveLength(3);
+    for (const request of seen) expect("frames" in request).toBe(false);
+  });
+});

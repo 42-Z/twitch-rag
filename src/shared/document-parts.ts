@@ -11,6 +11,7 @@
 
 import { AppError } from "./errors.ts";
 import type { Chapter } from "./categories.ts";
+import { framesInRange, type Frame } from "./frames.ts";
 import type { ComposedSection, DocumentPartRequest } from "./openrouter.ts";
 
 /**
@@ -36,6 +37,11 @@ export interface PartComposition {
   streamerInfo: string;
   /** Ключ закрепления за провайдером: у проходов одной записи он общий. */
   sessionId: string;
+  /**
+   * Кадры эфира, все. Проход берёт из них кадры своего участка (FR-004), а при
+   * делении участка каждая половина — свои, поэтому сюда идёт полный список.
+   */
+  frames?: readonly Frame[];
 }
 
 /**
@@ -51,6 +57,9 @@ export async function composePart(
   input: PartComposition,
   depth = 0,
 ): Promise<ComposedSection[]> {
+  // Кадры своего участка: у половины, получившейся при делении, участок свой.
+  // Без кадров поле в запрос не попадает — он остаётся прежним.
+  const frames = framesInRange(input.frames ?? [], input.part);
   try {
     return await composer.composeDocumentPart({
       fullTranscript: input.transcript,
@@ -59,6 +68,7 @@ export async function composePart(
       categories: input.categories,
       streamerInfo: input.streamerInfo,
       sessionId: input.sessionId,
+      ...(frames.length === 0 ? {} : { frames }),
     });
   } catch (error) {
     const span = input.part.endSeconds - input.part.startSeconds;

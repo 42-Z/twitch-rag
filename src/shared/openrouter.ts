@@ -21,9 +21,10 @@ import {
   DOCUMENT_NAME_SYSTEM_PROMPT,
   buildDocumentNameMessage,
   buildDocumentSystemPrompt,
-  buildPartMessage,
+  buildPartContent,
   buildTranscriptMessage,
 } from "./prompt.ts";
+import type { Frame } from "./frames.ts";
 
 export type { ComposedSection };
 
@@ -80,6 +81,12 @@ export interface DocumentPartRequest {
    * ключом сессии, а не полем `provider.order`.
    */
   sessionId: string;
+  /**
+   * Кадры этого участка по возрастанию времени: картинки по ссылкам, которые
+   * скачивает провайдер. Нет — запрос такой же, как до кадров, байт в байт
+   * (инструкция без раздела «Кадры», сообщение об участке строкой).
+   */
+  frames?: readonly Frame[];
 }
 
 /**
@@ -99,6 +106,44 @@ const openRouterExtras = (sessionId: string): OpenRouterExtras => ({
   provider: { require_parameters: true },
   session_id: sessionId,
 });
+
+export type DocumentPartParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & OpenRouterExtras;
+
+/**
+ * Параметры запроса прохода — чистая сборка, без обращения к сети. Вынесена
+ * из адаптера, чтобы стенд качества мерил боевой запрос, а не его копию: стенд
+ * подменяет лишь ссылки на кадры данными `data:`.
+ *
+ * Порядок сообщений — часть решения, а не оформление: неизменная расшифровка
+ * идёт перед меняющимся сообщением об участке, иначе общим префиксом проходов
+ * остаётся одна системная инструкция, а вся масса текста читается заново по
+ * полной цене. Кадры лежат в последнем сообщении и в префикс не входят.
+ */
+export function buildDocumentPartParams(request: DocumentPartRequest): DocumentPartParams {
+  const frames = request.frames ?? [];
+  return {
+    model: MODELS.document,
+    max_completion_tokens: MAX_OUTPUT_TOKENS,
+    temperature: 0.3,
+    response_format: DOCUMENT_RESPONSE_FORMAT,
+    messages: [
+      {
+        role: "system",
+        content: buildDocumentSystemPrompt({ streamerInfo: request.streamerInfo ?? "", withFrames: frames.length > 0 }),
+      },
+      {
+        role: "user",
+        content: buildTranscriptMessage({
+          publishedAt: request.publishedAt,
+          categories: request.categories,
+          fullTranscript: request.fullTranscript,
+        }),
+      },
+      { role: "user", content: buildPartContent(request.part, frames) },
+    ],
+    ...openRouterExtras(request.sessionId),
+  };
+}
 
 export class OpenRouter {
   private readonly client: OpenAI;
@@ -155,29 +200,7 @@ export class OpenRouter {
    * модели не вмещает пересказ семи часов за раз.
    */
   async composeDocumentPart(request: DocumentPartRequest): Promise<ComposedSection[]> {
-    const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & OpenRouterExtras = {
-      model: MODELS.document,
-      max_completion_tokens: MAX_OUTPUT_TOKENS,
-      temperature: 0.3,
-      response_format: DOCUMENT_RESPONSE_FORMAT,
-      // Порядок сообщений — часть решения, а не оформление: неизменная
-      // расшифровка идёт перед меняющейся строкой про участок, иначе общим
-      // префиксом проходов остаётся одна системная инструкция, а вся масса
-      // текста читается заново по полной цене.
-      messages: [
-        { role: "system", content: buildDocumentSystemPrompt({ streamerInfo: request.streamerInfo ?? "" }) },
-        {
-          role: "user",
-          content: buildTranscriptMessage({
-            publishedAt: request.publishedAt,
-            categories: request.categories,
-            fullTranscript: request.fullTranscript,
-          }),
-        },
-        { role: "user", content: buildPartMessage(request.part) },
-      ],
-      ...openRouterExtras(request.sessionId),
-    };
+    const params = buildDocumentPartParams(request);
 
     try {
       return readDocumentChoice((await this.client.chat.completions.create(params)).choices?.[0]);

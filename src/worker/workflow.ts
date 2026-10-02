@@ -24,6 +24,7 @@ import { buildChunks } from "../shared/chunks.ts";
 import { renderDocumentHeader, Documents } from "../shared/documents.ts";
 import { chunkId } from "../shared/knowledge.ts";
 import { composePart } from "../shared/document-parts.ts";
+import { minPassesForFrames } from "../shared/frames.ts";
 import { removeTemporary } from "./temporary.ts";
 
 /**
@@ -194,7 +195,11 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // --- составление документа ---
     // В каждом проходе модель получает расшифровку целиком, но пишет только
     // свой участок: иначе отсылки внутри эфира теряют смысл.
-    const partCount = Math.max(1, Math.ceil(transcriptChars / CHARS_PER_PART));
+    // Проходов не меньше, чем нужно по кадрам: у эфира с редкой речью на проход
+    // иначе пришлось бы больше картинок, чем принимает запрос (`shared/frames.ts`).
+    // Ссылки на кадры живут в параметрах экземпляра и в результаты шагов не идут.
+    const frames = params.frames ?? [];
+    const partCount = Math.max(1, Math.ceil(transcriptChars / CHARS_PER_PART), minPassesForFrames(frames.length));
     // Отрезок эфира, который разбирает этот прогон: у части — не от нуля.
     const range = {
       startSeconds: params.partStartSeconds,
@@ -213,6 +218,7 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
           publishedAt: params.publishedAt,
           categories: params.categories,
           streamerInfo,
+          frames,
           // Ключ закрепления за провайдером на всю запись: проходы одной
           // записи должны попадать на тот же узел, иначе кэш входа не сработает.
           sessionId: params.streamId,
