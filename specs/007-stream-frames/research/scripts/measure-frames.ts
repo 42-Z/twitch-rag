@@ -162,6 +162,7 @@ const modelOverride = arg("model", "");
 const effortOverride = arg("effort", "");
 /** Потолок токенов выхода одного прохода (рассуждение входит): верхняя граница цены прогона. */
 const maxOutputOverride = Number(arg("max-output", "0"));
+const providerOverride = arg("provider", "");
 const runLabel = `${label}${partMinutes === 0 ? "" : `-part${partMinutes}`}${tag === "" ? "" : `-${tag}`}`;
 
 interface TranscriptReport {
@@ -300,6 +301,14 @@ for (const variant of chosen) {
     if (modelOverride !== "") params.model = modelOverride;
     if (effortOverride !== "") (params as { reasoning?: unknown }).reasoning = { effort: effortOverride };
     if (maxOutputOverride > 0) params.max_completion_tokens = maxOutputOverride;
+    // Закрепить провайдера: у одной модели провайдеры отличаются пределом длины ответа и точностью весов.
+    if (providerOverride !== "") {
+      (params as { provider: Record<string, unknown> }).provider = {
+        ...(params as { provider: Record<string, unknown> }).provider,
+        only: [providerOverride],
+        allow_fallbacks: false,
+      };
+    }
     // Не у каждой модели есть температура и уровень рассуждения; с `require_parameters` лишнее поле
     // закрывает маршрут целиком («No endpoints found»), поэтому такие поля убираются из запроса.
     if (process.argv.includes("--no-temperature")) delete (params as { temperature?: unknown }).temperature;
@@ -332,9 +341,15 @@ for (const variant of chosen) {
       seconds: Math.round((Date.now() - started) / 1000),
     });
     console.log(
-      `  разделов ${composed.length}, вход ${usage.prompt_tokens ?? "?"} токенов, выход ${usage.completion_tokens ?? "?"}, ` +
+      `  провайдер ${response.provider ?? "?"}, разделов ${composed.length}, вход ${usage.prompt_tokens ?? "?"} токенов, выход ${usage.completion_tokens ?? "?"}, ` +
         `цена ${usage.cost ?? "?"}${failure === null ? "" : `, СБОЙ: ${failure}`}`,
     );
+    // Ответ, который не разобрался, сохраняется целиком: без него причину сбоя не увидеть.
+    if (failure !== null) {
+      const rawFile = path.join(dataDir, `raw-${runLabel}-${variant.name}-pass${index + 1}.json`);
+      await writeFile(rawFile, `${JSON.stringify(response, null, 2)}\n`);
+      console.log(`  сырой ответ сохранён: data/raw-${runLabel}-${variant.name}-pass${index + 1}.json`);
+    }
     // При подмене модели сбой первого же прохода останавливает прогон: остальные проходы стоили бы
     // денег и показали бы то же самое (обрыв по потолку, не тот формат ответа).
     if (failure !== null && modelOverride !== "") {
