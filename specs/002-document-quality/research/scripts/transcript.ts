@@ -66,11 +66,12 @@ if (key === "") throw new Error("нет OPENROUTER_API_KEY");
 
 const researchDir = path.resolve(import.meta.dirname, "..");
 const dataDir = path.join(researchDir, "data");
-const workDir = path.join(dataDir, "work", vod);
+const label = `${vod}-${from}-${to}`;
+// Каталог у каждого участка свой: два участка одной записи можно распознавать одновременно.
+const workDir = path.join(dataDir, "work", label);
 await rm(workDir, { recursive: true, force: true });
 await mkdir(workDir, { recursive: true });
 
-const label = `${vod}-${from}-${to}`;
 const url = `https://www.twitch.tv/videos/${vod}`;
 
 // Сведения о записи: название нужно проверкам промпта, главы — категориям.
