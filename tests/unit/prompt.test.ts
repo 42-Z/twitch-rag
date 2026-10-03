@@ -181,6 +181,64 @@ describe("сообщение об участке с кадрами", () => {
     ]);
   });
 
+  test("с расшифровкой речь участка идёт вперемешку с кадрами: кадр стоит там, где снят, строка — один раз", () => {
+    const transcript = [
+      "[1790] до участка",
+      "[1800] раз",
+      "[1850] два",
+      "продолжение два",
+      "[1890] три",
+      "[2000] четыре",
+      "[2100] пять",
+      "[2340] после участка",
+    ].join("\n");
+    const items = buildPartContent(PART, [frame(2070), frame(1890)], transcript) as Array<{ type: string; text?: string; image_url?: { url: string } }>;
+
+    expect(items.map((item) => item.type)).toEqual(["text", "text", "image_url", "text", "image_url", "text"]);
+    expect(items[0]?.text).toContain("С 1800 по 2340 секунду");
+    expect(items[0]?.text).toContain("вперемешку с кадрами");
+    // Кадры по времени, хоть пришли вразнобой; речь до кадра — перед ним, речь после — за ним.
+    expect(items[1]?.text).toBe("[1800] раз\n[1850] два\nпродолжение два\n\nКадр, 1890 с:");
+    expect(items[2]?.image_url?.url).toBe("https://example.test/frame-1890.jpg");
+    expect(items[3]?.text).toBe("[1890] три\n[2000] четыре\n\nКадр, 2070 с:");
+    expect(items[4]?.image_url?.url).toBe("https://example.test/frame-2070.jpg");
+    expect(items[5]?.text).toBe("[2100] пять");
+    // Строки вне участка не попадают, а каждая строка участка выходит один раз.
+    const all = items.map((item) => item.text ?? "").join("\n");
+    expect(all).not.toContain("до участка");
+    expect(all).not.toContain("после участка");
+    expect(all.match(/\[1890\] три/g)).toHaveLength(1);
+  });
+
+  test("если речи до кадра нет, перед ним только подпись; без расшифровки раскладка прежняя", () => {
+    const items = buildPartContent(PART, [frame(1800)], "[1900] речь") as Array<{ type: string; text?: string }>;
+
+    expect(items[1]?.text).toBe("Кадр, 1800 с:");
+    expect(items.at(-1)?.text).toBe("[1900] речь");
+    expect((buildPartContent(PART, [frame(1800)], "") as unknown[]).map((item) => (item as { type: string }).type)).toEqual([
+      "text", "text", "image_url",
+    ]);
+  });
+
+  test("запрос прохода кладёт в сообщение участка речь вместе с кадрами, а полная расшифровка остаётся целой", () => {
+    const params = buildDocumentPartParams({
+      fullTranscript: "[1790] раньше\n[1900] вот этот\n[2400] позже",
+      part: PART,
+      publishedAt: "2026-09-16T16:54:29Z",
+      categories: [],
+      streamerInfo: "",
+      sessionId: "s",
+      frames: [frame(1890)],
+    });
+    const [, transcriptMessage, partMessage] = params.messages as Array<{ content: unknown }>;
+
+    expect(transcriptMessage?.content).toContain("[1790] раньше");
+    expect(transcriptMessage?.content).toContain("[2400] позже");
+    const texts = (partMessage?.content as Array<{ type: string; text?: string }>).map((item) => item.text ?? "").join("\n");
+    expect(texts).toContain("[1900] вот этот");
+    expect(texts).not.toContain("[1790] раньше");
+  });
+
   test("120 кадров — ровно 50 картинок, первый и последний на месте", () => {
     const frames = frameRange(120);
     const items = buildPartContent(PART, frames) as Array<{ type: string; image_url?: { url: string } }>;

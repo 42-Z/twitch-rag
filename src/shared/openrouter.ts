@@ -139,7 +139,7 @@ export function buildDocumentPartParams(request: DocumentPartRequest): DocumentP
           fullTranscript: request.fullTranscript,
         }),
       },
-      { role: "user", content: buildPartContent(request.part, frames) },
+      { role: "user", content: buildPartContent(request.part, frames, request.fullTranscript) },
     ],
     ...openRouterExtras(request.sessionId),
   };
