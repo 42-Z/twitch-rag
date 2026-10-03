@@ -25,7 +25,10 @@
  *   node --env-file=.env … measure-frames.ts --transcript 2875806701-1200-5400 \
  *     --frames 2875806701-1200-5400 --probes secrets --tag run1-probes
  *
- * Ключи: `--part-minutes` — проходы фиксированной длины вместо боевого деления
+ * Ключи: `--model` и `--effort` — подменить модель и уровень рассуждения (только в замере, боевой
+ * запрос их не меняет); `--max-output N` — потолок токенов выхода прохода; `--no-temperature` и
+ * `--no-reasoning` — убрать поле из запроса (у модели его нет); при подмене модели сбой прохода
+ * останавливает прогон; `--part-minutes` — проходы фиксированной длины вместо боевого деления
  * по числу знаков и кадров; `--streamer-info` — сведения о стримере (по
  * умолчанию пусто: стенд меряет вклад кадров, а не сведений); `--variants` —
  * какие из `base,frames` гонять; `--tag` — метка прогона, не затирающая прежние;
@@ -38,6 +41,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Agent, fetch as undiciFetch } from "undici";
 import { planDocumentParts } from "../../../../src/shared/categories.ts";
 import { framesInRange, minPassesForFrames, type Frame } from "../../../../src/shared/frames.ts";
 import {
@@ -153,6 +157,11 @@ if (!["none", "secrets", "orders"].includes(probesArg)) throw new Error("--probe
 if (probesArg !== "none" && framesArg === "none") throw new Error("--probes подмешивает кадры к настоящим: нужен --frames");
 const partMinutes = Number(arg("part-minutes", "0"));
 const streamerInfo = arg("streamer-info", "");
+// Модель и уровень рассуждения подменяются только здесь, в замере: боевой запрос их не меняет.
+const modelOverride = arg("model", "");
+const effortOverride = arg("effort", "");
+/** Потолок токенов выхода одного прохода (рассуждение входит): верхняя граница цены прогона. */
+const maxOutputOverride = Number(arg("max-output", "0"));
 const runLabel = `${label}${partMinutes === 0 ? "" : `-part${partMinutes}`}${tag === "" ? "" : `-${tag}`}`;
 
 interface TranscriptReport {
@@ -236,11 +245,16 @@ const parts = planDocumentParts(range, report.chapters, passCount);
 console.log(`расшифровка: ${transcript.length} знаков; кадров: ${frames.length}; проходов: ${parts.length}`);
 
 /** Один запрос к модели: тело — боевые параметры как есть. */
+// Ответ без потока приходит целиком после рассуждения: на максимальном уровне это больше пяти минут,
+// а у встроенного ожидания заголовков предел ровно пять — запрос оборвался бы уже оплаченным.
+const patientAgent = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+
 async function post(params: DocumentPartParams): Promise<any> {
-  const response = await fetch(`${BASE_URL}/chat/completions`, {
+  const response = await undiciFetch(`${BASE_URL}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
     body: JSON.stringify(params),
+    dispatcher: patientAgent,
   });
   if (!response.ok) throw new Error(`модель ответила ${response.status}: ${(await response.text()).slice(0, 600)}`);
   return await response.json();
@@ -282,7 +296,15 @@ for (const variant of chosen) {
     console.log(`\n${variant.name}, проход ${index + 1} из ${parts.length} (${part.startSeconds}–${part.endSeconds} с, кадров ${request.frames?.length ?? 0})…`);
 
     const started = Date.now();
-    const response = await post(buildDocumentPartParams(request));
+    const params = buildDocumentPartParams(request);
+    if (modelOverride !== "") params.model = modelOverride;
+    if (effortOverride !== "") (params as { reasoning?: unknown }).reasoning = { effort: effortOverride };
+    if (maxOutputOverride > 0) params.max_completion_tokens = maxOutputOverride;
+    // Не у каждой модели есть температура и уровень рассуждения; с `require_parameters` лишнее поле
+    // закрывает маршрут целиком («No endpoints found»), поэтому такие поля убираются из запроса.
+    if (process.argv.includes("--no-temperature")) delete (params as { temperature?: unknown }).temperature;
+    if (process.argv.includes("--no-reasoning")) delete (params as { reasoning?: unknown }).reasoning;
+    const response = await post(params);
     const usage = response.usage ?? {};
     let composed: ComposedSection[] = [];
     let failure: string | null = null;
@@ -313,6 +335,12 @@ for (const variant of chosen) {
       `  разделов ${composed.length}, вход ${usage.prompt_tokens ?? "?"} токенов, выход ${usage.completion_tokens ?? "?"}, ` +
         `цена ${usage.cost ?? "?"}${failure === null ? "" : `, СБОЙ: ${failure}`}`,
     );
+    // При подмене модели сбой первого же прохода останавливает прогон: остальные проходы стоили бы
+    // денег и показали бы то же самое (обрыв по потолку, не тот формат ответа).
+    if (failure !== null && modelOverride !== "") {
+      console.log(`\nпрогон остановлен после сбоя: потрачено ${cost.toFixed(6)} $, документ не сохранён`);
+      process.exit(2);
+    }
   }
 
   // Проба: что просочилось и остались ли у каждого прохода разделы. Приказ
@@ -333,6 +361,8 @@ for (const variant of chosen) {
     variant: variant.name,
     label,
     tag,
+    model: modelOverride === "" ? "по умолчанию" : modelOverride,
+    effort: effortOverride === "" ? "по умолчанию" : effortOverride,
     measuredAt: new Date().toISOString(),
     framesTotal: variant.useFrames ? frames.length : 0,
     passes,
