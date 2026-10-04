@@ -156,7 +156,16 @@ const probesArg = arg("probes", "none");
 if (!["none", "secrets", "orders"].includes(probesArg)) throw new Error("--probes: secrets или orders");
 if (probesArg !== "none" && framesArg === "none") throw new Error("--probes подмешивает кадры к настоящим: нужен --frames");
 const partMinutes = Number(arg("part-minutes", "0"));
-const streamerInfo = arg("streamer-info", "");
+// Сведения о стримере: готовый текст поля «О стримере» берётся из ограждённого блока файла (--streamer-info-file),
+// как его вводит владелец в разделе управления; боевой запрос передаёт то же поле.
+const streamerInfoFile = arg("streamer-info-file", "");
+const streamerInfo =
+  streamerInfoFile === ""
+    ? arg("streamer-info", "")
+    : ((await readFile(streamerInfoFile, "utf8")).match(/```\n([\s\S]*?)\n```/)?.[1] ??
+      (() => {
+        throw new Error("--streamer-info-file: в файле нет ограждённого блока ```");
+      })());
 // Модель и уровень рассуждения подменяются только здесь, в замере: боевой запрос их не меняет.
 const modelOverride = arg("model", "");
 const effortOverride = arg("effort", "");
@@ -250,15 +259,26 @@ console.log(`расшифровка: ${transcript.length} знаков; кадр
 // а у встроенного ожидания заголовков предел ровно пять — запрос оборвался бы уже оплаченным.
 const patientAgent = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
+// Отказ 429 — временный предел самого провайдера, запрос не принят и не оплачен: повторяется через минуту.
+const RATE_LIMIT_RETRIES = 5;
+const RATE_LIMIT_WAIT_MS = 60_000;
+
 async function post(params: DocumentPartParams): Promise<any> {
-  const response = await undiciFetch(`${BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify(params),
-    dispatcher: patientAgent,
-  });
-  if (!response.ok) throw new Error(`модель ответила ${response.status}: ${(await response.text()).slice(0, 600)}`);
-  return await response.json();
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await undiciFetch(`${BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify(params),
+      dispatcher: patientAgent,
+    });
+    if (response.status === 429 && attempt <= RATE_LIMIT_RETRIES) {
+      console.log(`  429 от провайдера, повтор ${attempt} из ${RATE_LIMIT_RETRIES} через минуту`);
+      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_WAIT_MS));
+      continue;
+    }
+    if (!response.ok) throw new Error(`модель ответила ${response.status}: ${(await response.text()).slice(0, 600)}`);
+    return await response.json();
+  }
 }
 
 interface Variant {
