@@ -273,12 +273,23 @@ const RATE_LIMIT_WAIT_MS = 60_000;
 
 async function post(params: DocumentPartParams): Promise<any> {
   for (let attempt = 1; ; attempt += 1) {
-    const response = await undiciFetch(`${BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify(params),
-      dispatcher: patientAgent,
-    });
+    let response;
+    try {
+      response = await undiciFetch(`${BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
+        body: JSON.stringify(params),
+        dispatcher: patientAgent,
+      });
+    } catch (error) {
+      // Соединение закрыто до ответа (`UND_ERR_SOCKET`): прогон из нескольких проходов не должен пропадать из-за
+      // одного обрыва, а уже оплаченные проходы стенд не сохраняет. Повторяется так же, как 429; списал ли
+      // провайдер оборванный запрос, неизвестно.
+      if (attempt > RATE_LIMIT_RETRIES) throw error;
+      console.log(`  обрыв соединения (${(error as Error).cause ?? (error as Error).message}), повтор ${attempt} из ${RATE_LIMIT_RETRIES} через минуту`);
+      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_WAIT_MS));
+      continue;
+    }
     if (response.status === 429 && attempt <= RATE_LIMIT_RETRIES) {
       console.log(`  429 от провайдера, повтор ${attempt} из ${RATE_LIMIT_RETRIES} через минуту`);
       await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_WAIT_MS));
