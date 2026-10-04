@@ -21,9 +21,10 @@ import {
   DOCUMENT_NAME_SYSTEM_PROMPT,
   buildDocumentNameMessage,
   buildDocumentSystemPrompt,
-  buildPartMessage,
+  buildPartContent,
   buildTranscriptMessage,
 } from "./prompt.ts";
+import type { Frame } from "./frames.ts";
 
 export type { ComposedSection };
 
@@ -33,30 +34,40 @@ export const MODELS = {
   /** Даёт посегментные таймкоды — без них невозможна ссылка на момент записи. */
   speechToText: "openai/whisper-large-v3-turbo",
   /**
-   * Составление документа и выработка имени. Контекст 1 048 576 токенов,
-   * потолок выхода 943 718: расшифровка эфира входит целиком, а рассуждения
-   * не съедают потолок, как у прежней модели.
+   * Составление документа и выработка имени. Контекст 1 050 000 токенов,
+   * потолок выхода 128 000: расшифровка эфира входит целиком. Выбор владельца
+   * (спецификация 007, допущения): на замерах у неё меньше ошибок на раздел и
+   * выдумок, чем у `meta/muse-spark-1.3-contributor`; цена выше, расчёт — в
+   * `specs/007-stream-frames/baseline.md` §6.
    */
-  document: "meta/muse-spark-1.3-contributor",
+  document: "openai/gpt-6-luna",
   /** 1536 измерений — столько же у индекса. */
   embedding: "openai/text-embedding-3-small",
 } as const;
 
 /**
- * Потолок выхода у выбранной модели — её собственный предел, а не наша
- * оценка. Прежние 32 768 были занижены на порядок: у той модели в них
- * упирались не документ, а её рассуждения, и половина проходов возвращалась
- * пустой. Вход и выход делят один бюджет контекста, поэтому потолок выхода
- * ограничен разницей между контекстом и расшифровкой.
+ * Потолок выхода у выбранной модели — её собственный предел по каталогу
+ * (`top_provider.max_completion_tokens`), а не наша оценка. Рассуждения на
+ * `max` входят в него: самый длинный выход на замерах — 82 190 токенов
+ * (64 %), и ответ, упёршийся в потолок, приходит пустым, но оплаченным.
  */
-export const MAX_OUTPUT_TOKENS = 943718;
+export const MAX_OUTPUT_TOKENS = 128000;
 
 /**
- * Доля потолка, отданная рассуждениям. Значение задаётся явно, а не отдаётся
- * на умолчание каталога: иначе поведение разбора поедет вместе с чужой
- * настройкой. Замеры сделаны на `medium` — оно же умолчание каталога.
+ * Уровень рассуждений. Значение задаётся явно, а не отдаётся на умолчание
+ * каталога: иначе поведение разбора поедет вместе с чужой настройкой. Все
+ * замеры качества сделаны на `max`; на запросе имени он стоит $0,000447.
  */
-const REASONING_EFFORT = "medium";
+const REASONING_EFFORT = "max";
+
+/**
+ * Сколько ждать ответа на проход составления. По умолчанию у клиента SDK
+ * десять минут, а самый долгий проход на замерах занял 558 с
+ * (`specs/007-stream-frames/baseline.md` §6): с запасом вдвое. Шаг Workflow
+ * ждёт дольше клиента, чтобы обрыв приходил ошибкой клиента, а не снятием шага.
+ */
+export const DOCUMENT_REQUEST_TIMEOUT_MINUTES = 20;
+export const DOCUMENT_STEP_TIMEOUT_MINUTES = 30;
 
 export interface TranscriptionResult {
   segments: TranscriptSegment[];
@@ -80,6 +91,12 @@ export interface DocumentPartRequest {
    * ключом сессии, а не полем `provider.order`.
    */
   sessionId: string;
+  /**
+   * Кадры этого участка по возрастанию времени: картинки по ссылкам, которые
+   * скачивает провайдер. Нет — запрос такой же, как до кадров, байт в байт
+   * (инструкция без раздела «Кадры», сообщение об участке строкой).
+   */
+  frames?: readonly Frame[];
 }
 
 /**
@@ -99,6 +116,67 @@ const openRouterExtras = (sessionId: string): OpenRouterExtras => ({
   provider: { require_parameters: true },
   session_id: sessionId,
 });
+
+export type DocumentPartParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & OpenRouterExtras;
+
+/**
+ * Параметры запроса прохода — чистая сборка, без обращения к сети. Вынесена
+ * из адаптера, чтобы стенд качества мерил боевой запрос, а не его копию: стенд
+ * подменяет лишь ссылки на кадры данными `data:`.
+ *
+ * Порядок сообщений — часть решения, а не оформление: неизменная расшифровка
+ * идёт перед меняющимся сообщением об участке, иначе общим префиксом проходов
+ * остаётся одна системная инструкция, а вся масса текста читается заново по
+ * полной цене. Кадры лежат в последнем сообщении и в префикс не входят.
+ */
+export function buildDocumentPartParams(request: DocumentPartRequest): DocumentPartParams {
+  const frames = request.frames ?? [];
+  return {
+    model: MODELS.document,
+    max_completion_tokens: MAX_OUTPUT_TOKENS,
+    response_format: DOCUMENT_RESPONSE_FORMAT,
+    messages: [
+      {
+        role: "system",
+        content: buildDocumentSystemPrompt({ streamerInfo: request.streamerInfo ?? "", withFrames: frames.length > 0 }),
+      },
+      {
+        role: "user",
+        content: buildTranscriptMessage({
+          publishedAt: request.publishedAt,
+          categories: request.categories,
+          fullTranscript: request.fullTranscript,
+        }),
+      },
+      { role: "user", content: buildPartContent(request.part, frames, request.fullTranscript) },
+    ],
+    ...openRouterExtras(request.sessionId),
+  };
+}
+
+/** Параметры запроса имени документа — чистая сборка, как у `buildDocumentPartParams`. */
+export function buildDocumentNameParams(input: {
+  publishedAt: string;
+  sectionTitles: readonly string[];
+  sessionId: string;
+}): DocumentPartParams {
+  return {
+    model: MODELS.document,
+    max_completion_tokens: MAX_OUTPUT_TOKENS,
+    response_format: DOCUMENT_NAME_RESPONSE_FORMAT,
+    messages: [
+      { role: "system", content: DOCUMENT_NAME_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: buildDocumentNameMessage({
+          publishedAt: input.publishedAt,
+          sectionTitles: input.sectionTitles,
+        }),
+      },
+    ],
+    ...openRouterExtras(input.sessionId),
+  };
+}
 
 export class OpenRouter {
   private readonly client: OpenAI;
@@ -155,32 +233,17 @@ export class OpenRouter {
    * модели не вмещает пересказ семи часов за раз.
    */
   async composeDocumentPart(request: DocumentPartRequest): Promise<ComposedSection[]> {
-    const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & OpenRouterExtras = {
-      model: MODELS.document,
-      max_completion_tokens: MAX_OUTPUT_TOKENS,
-      temperature: 0.3,
-      response_format: DOCUMENT_RESPONSE_FORMAT,
-      // Порядок сообщений — часть решения, а не оформление: неизменная
-      // расшифровка идёт перед меняющейся строкой про участок, иначе общим
-      // префиксом проходов остаётся одна системная инструкция, а вся масса
-      // текста читается заново по полной цене.
-      messages: [
-        { role: "system", content: buildDocumentSystemPrompt({ streamerInfo: request.streamerInfo ?? "" }) },
-        {
-          role: "user",
-          content: buildTranscriptMessage({
-            publishedAt: request.publishedAt,
-            categories: request.categories,
-            fullTranscript: request.fullTranscript,
-          }),
-        },
-        { role: "user", content: buildPartMessage(request.part) },
-      ],
-      ...openRouterExtras(request.sessionId),
-    };
+    const params = buildDocumentPartParams(request);
 
     try {
-      return readDocumentChoice((await this.client.chat.completions.create(params)).choices?.[0]);
+      // Повторов клиента нет: он повторяет и оборванный по таймауту запрос, три раза по двадцать минут
+      // не уложились бы в тридцать минут шага, а каждый повтор на `max` оплачивается заново. Отказы
+      // 429 и 5xx повторяет сам шаг Workflow.
+      const response = await this.client.chat.completions.create(params, {
+        timeout: DOCUMENT_REQUEST_TIMEOUT_MINUTES * 60_000,
+        maxRetries: 0,
+      });
+      return readDocumentChoice(response.choices?.[0]);
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw upstreamError("составление документа", error);
@@ -199,23 +262,7 @@ export class OpenRouter {
     sectionTitles: readonly string[];
     sessionId: string;
   }): Promise<string> {
-    const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & OpenRouterExtras = {
-      model: MODELS.document,
-      max_completion_tokens: MAX_OUTPUT_TOKENS,
-      temperature: 0.3,
-      response_format: DOCUMENT_NAME_RESPONSE_FORMAT,
-      messages: [
-        { role: "system", content: DOCUMENT_NAME_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: buildDocumentNameMessage({
-            publishedAt: input.publishedAt,
-            sectionTitles: input.sectionTitles,
-          }),
-        },
-      ],
-      ...openRouterExtras(input.sessionId),
-    };
+    const params = buildDocumentNameParams(input);
 
     try {
       return readDocumentNameChoice((await this.client.chat.completions.create(params)).choices?.[0]);
@@ -295,6 +342,35 @@ export function readDocumentNameChoice(choice: CompletionChoice | undefined): st
   return name;
 }
 
+/**
+ * Статусы, при которых виноваты не кадры: ключ, деньги, срок ответа, частота.
+ * Повтор без кадров их не лечит.
+ */
+const NOT_FRAMES_STATUSES = new Set([401, 402, 408, 429]);
+
+/**
+ * Отказала ли модель из-за кадров: запрос с кадрами закончился отказом модели
+ * (`model_refused`) либо ответом 4xx, кроме 401, 402, 408 и 429.
+ *
+ * Разбор по классу ответа, а не по типу ошибки: документированные типы
+ * (`image_download_failed`, `invalid_image`…) живые ответы OpenRouter не несут —
+ * там `400 Provider returned error` с кодом провайдера, а для мусорной картинки
+ * и вовсе без кода (`research.md` §6). Если причина была не в кадрах (скажем,
+ * превышен контекст), повтор без них упадёт так же, и ошибка уйдёт наверх как
+ * раньше: цена ошибки в классификации — одно лишнее обращение.
+ *
+ * Статус берётся у причины, а не у самой ошибки: у `AppError` свой `status` —
+ * он зависит от кода (`invalid_input` — 400) и о ответе модели ничего не говорит.
+ * Обрыв соединения, 5xx и 408 SDK повторяет сам, до этого места они не доходят.
+ */
+export function isFramesRejection(error: unknown): boolean {
+  if (error instanceof AppError && error.code === "model_refused") return true;
+
+  const source: unknown = error instanceof AppError ? error.cause : error;
+  const status = typeof source === "object" && source !== null ? (source as { status?: unknown }).status : undefined;
+  return typeof status === "number" && status >= 400 && status < 500 && !NOT_FRAMES_STATUSES.has(status);
+}
+
 /** Общая часть разбора: отказ модели, обрыв по потолку и ответ без вариантов. */
 function requireMessage(choice: CompletionChoice | undefined): { refusal?: string | null; content?: string | null } {
   if (choice === undefined) {
@@ -314,6 +390,10 @@ function requireMessage(choice: CompletionChoice | undefined): { refusal?: strin
   }
   if (choice.finish_reason === "content_filter") {
     throw new AppError("model_refused", "Модель отказалась составлять документ: сработала модерация.");
+  }
+  if ((choice.finish_reason as string) === "error") {
+    // OpenRouter: провайдер упал после начала ответа — статус 200, а причина в `finish_reason`.
+    throw new AppError("upstream_unavailable", "Провайдер модели оборвал ответ ошибкой.");
   }
   if (choice.finish_reason === "length") {
     throw new AppError("output_truncated", "Ответ модели оборван потолком выхода: он неполон.");

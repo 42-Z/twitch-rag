@@ -8,6 +8,8 @@
 
 import { AppError } from "../../shared/errors.ts";
 import { parseStreamId } from "../../shared/stream-id.ts";
+import type { TimeRange } from "../../shared/categories.ts";
+import type { Frame } from "../../shared/frames.ts";
 import type { Env, IngestParams, Services } from "../env.ts";
 
 export interface IngestReadyBody {
@@ -27,6 +29,12 @@ export interface IngestReadyBody {
   durationSeconds: number;
   categories: Array<{ title: string; startSeconds: number; endSeconds: number }>;
   chunks: Array<{ index: number; key: string; offsetSeconds: number; durationSeconds: number }>;
+  /**
+   * Кадры эфира: ссылки на объекты в R2. Нет у прежней программы конвейера.
+   * Тип `unknown` намеренно: боксу доверен общий секрет, но не форма ссылок,
+   * которые дальше скачивает чужой сервис (`requireFrames`).
+   */
+  frames?: unknown;
 }
 
 export interface IngestFailedBody {
@@ -204,6 +212,11 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
   const publishedAtUnix = Math.floor(new Date(payload.publishedAt).getTime() / 1000) + partStartSeconds;
   const publishedAt = partStartSeconds === 0 ? payload.publishedAt : new Date(publishedAtUnix * 1000).toISOString();
 
+  const frames = requireFrames(payload.frames, streamId, {
+    startSeconds: partStartSeconds,
+    endSeconds: partStartSeconds + payload.durationSeconds,
+  });
+
   // Заголовок из сигнала бокса в разбор не передаётся: он не участвует ни в
   // документе, ни в имени (FR-027) и остаётся служебным полем реестра.
   const params: IngestParams = {
@@ -216,6 +229,8 @@ export async function handleIngestReady(request: Request, env: Env, services: Se
     durationSeconds: payload.durationSeconds,
     categories: payload.categories,
     chunks: payload.chunks,
+    // Только когда кадры есть: пустой список равен отсутствию поля.
+    ...(frames.length === 0 ? {} : { frames }),
   };
 
   let instanceId: string;
@@ -271,6 +286,81 @@ function identify(body: { vodId: string; streamId?: string }): { streamId: strin
     throw new AppError("invalid_input", "Идентификатор записи в сигнале не совпадает с номером записи.");
   }
   return { streamId, vodId: parsed.vodId };
+}
+
+/** Подписанная ссылка R2 — 385 знаков; запас до тысячи, дальше это не ссылка. */
+const MAX_FRAME_URL_LENGTH = 1000;
+/** Штатно кадров не больше 120 (часть до шести часов); 400 — потолок на случай ошибки бокса. */
+const MAX_FRAMES_IN_SIGNAL = 400;
+/** Домен, на котором R2 отдаёт подписанные адреса S3 (`research.md` §2). */
+const R2_HOST_SUFFIX = ".r2.cloudflarestorage.com";
+
+/**
+ * Кадры из сигнала бокса: остаётся только то, что прошло проверки.
+ *
+ * Сигнал аутентифицирован общим секретом, но ссылки из него уходят дальше —
+ * их скачивает чужой сервис, — поэтому каждая проверяется: форма, адрес
+ * (https, домен R2, путь кадров именно этой записи), время внутри отрезка,
+ * повторы секунд. Негодная запись **отбрасывается одна, а сигнал принимается**:
+ * разбор важнее одной картинки (FR-016). Отброшенное считается недобытым и
+ * попадает в учёт «без кадров». В журнал идёт число отброшенных, не адреса.
+ */
+export function requireFrames(value: unknown, streamId: string, range: TimeRange): Frame[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    console.warn(`[разбор ${streamId}] поле кадров не массив — кадров нет`);
+    return [];
+  }
+
+  const pathMarker = `/frames/${streamId}/`;
+  const seen = new Set<number>();
+  const accepted: Frame[] = [];
+  for (const entry of value as unknown[]) {
+    const frame = readFrame(entry);
+    if (frame === undefined) continue;
+    if (frame.atSeconds < range.startSeconds || frame.atSeconds >= range.endSeconds) continue;
+    if (!isOwnFrameUrl(frame.url, pathMarker)) continue;
+    // Повтор той же секунды: остаётся первый.
+    if (seen.has(frame.atSeconds)) continue;
+    seen.add(frame.atSeconds);
+    accepted.push(frame);
+  }
+
+  // Больше потолка — остаются первые по времени, а не по порядку в сигнале.
+  const frames = accepted.sort((a, b) => a.atSeconds - b.atSeconds).slice(0, MAX_FRAMES_IN_SIGNAL);
+  if (frames.length < value.length) {
+    console.warn(`[разбор ${streamId}] кадров отброшено при приёме: ${value.length - frames.length}`);
+  }
+  return frames;
+}
+
+/** Форма записи: объект с целым `atSeconds ≥ 0` и строкой `url` не длиннее предела. */
+function readFrame(entry: unknown): Frame | undefined {
+  if (typeof entry !== "object" || entry === null) return undefined;
+  const { atSeconds, url } = entry as { atSeconds?: unknown; url?: unknown };
+  if (typeof atSeconds !== "number" || !Number.isSafeInteger(atSeconds) || atSeconds < 0) return undefined;
+  if (typeof url !== "string" || url.length === 0 || url.length > MAX_FRAME_URL_LENGTH) return undefined;
+  return { atSeconds, url };
+}
+
+/**
+ * Адрес кадра этой записи: https, хост R2 без чужого порта, в пути — каталог
+ * кадров этой записи. Путь берётся из разобранного адреса, где `..` уже
+ * свернуты, а не из строки.
+ */
+function isOwnFrameUrl(raw: string, pathMarker: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === "https:" &&
+    url.port === "" &&
+    url.hostname.endsWith(R2_HOST_SUFFIX) &&
+    url.pathname.includes(pathMarker)
+  );
 }
 
 /** Начало отрезка: у сигнала прежней программы поля нет — это неделёная запись. */

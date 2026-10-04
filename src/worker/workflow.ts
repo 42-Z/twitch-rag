@@ -8,6 +8,13 @@
  * прогон ограничено пятьюдесятью — отсюда и деление длинного эфира на части
  * (`shared/stream-parts.ts`): разбирается одна часть, а не весь эфир.
  *
+ * Кадры эфира обращений не прибавляют, пока модель их принимает. Отказ по
+ * кадрам лечится переписыванием прохода без них — одно обращение сверху, и не
+ * больше `MAX_FRAME_FALLBACKS` на часть: запас худшего сочетания — четыре
+ * обращения из пятидесяти. Число проходов зависит и от кадров (не меньше
+ * ⌈кадров ÷ 24⌉), чтобы на проход не пришлось больше картинок, чем принимает
+ * запрос. Расчёт: `specs/007-stream-frames/research.md` §5.
+ *
  * Время внутри части абсолютное, от начала эфира: метки кусков приходят из
  * конвейера уже такими, и Worker их не сдвигает.
  */
@@ -16,15 +23,16 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import type { Env, IngestParams, Services } from "./env.ts";
 import { createServices } from "./env.ts";
 import { shiftSegments, prevailingLanguage, formatDuration } from "../shared/time.ts";
-import { renderTranscript } from "../shared/openrouter.ts";
+import { DOCUMENT_STEP_TIMEOUT_MINUTES, renderTranscript } from "../shared/openrouter.ts";
 import { planDocumentParts, assignCategories, uniqueCategories, findCoverageGaps } from "../shared/categories.ts";
 import { withPartLabel } from "../shared/document-name.ts";
 import { normalizeSections, type ParsedSection } from "../shared/sections.ts";
 import { buildChunks } from "../shared/chunks.ts";
 import { renderDocumentHeader, Documents } from "../shared/documents.ts";
 import { chunkId } from "../shared/knowledge.ts";
-import { composePart } from "../shared/document-parts.ts";
-import { removeTemporary } from "./temporary.ts";
+import { composePart, composePasses } from "../shared/document-parts.ts";
+import { composeReason, formatFramelessNote, framelessSeconds, minPassesForFrames } from "../shared/frames.ts";
+import { removeFrames, removeTemporary } from "./temporary.ts";
 
 /**
  * Сколько знаков расшифровки приходится на один проход.
@@ -32,9 +40,11 @@ import { removeTemporary } from "./temporary.ts";
  * Значение выбрано замером, а не по запасу потолка: доля сказанного, которая
  * доходит до документа, падает с ростом прохода — на семидесяти минутах эфира
  * это 51 % и восемь потерянных мест, на сорока 68 % и ни одной потери, на
- * тридцати 64 % и ниже уже не растёт. Потолок выхода тут ни при чём: расход
- * прохода — тысячи токенов из девятисот тысяч возможных, ограничивает не он,
- * а склонность модели сжимать тем сильнее, чем больше перед ней текста.
+ * тридцати 64 % и ниже уже не растёт. Эти замеры сняты на прежней модели, где
+ * потолок выхода был ни при чём: ограничивала склонность модели сжимать тем
+ * сильнее, чем больше перед ней текста. У GPT-6 Luna на `max` проход тратит до
+ * 82 тысяч токенов из 128 тысяч возможных — при росте прохода потолок станет
+ * вторым ограничением.
  *
  * Плата за мельче — вдвое больше вызовов модели и швов между проходами;
  * вызов стоит доли цента, а швы приходятся на смену темы.
@@ -77,15 +87,35 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       // а реестр читается публичным токеном — текст ошибки увидел бы любой
       // посетитель страницы.
       console.error(`[разбор ${params.streamId}] ${message}`);
-      if (!isEngineReset(message) && !(await isAlreadyFinished(params.streamId, services))) {
-        // Запись не должна остаться в processing навсегда — её возьмут заново
-        // на следующем опросе (schedule.ts проверяет attempts).
-        await services.registry.patchStream(params.streamId, {
-          status: "failed",
-          reason: FAILURE_REASON,
-        });
+      if (!isEngineReset(message)) {
+        // Кадры, в отличие от аудио, переигровке не нужны: проходы составления
+        // без них не повторяются, а новый заход бокса положит кадры заново.
+        // Оставлять на кадрах лица и ники зрителей до суточной уборки незачем.
+        await this.dropFrames(params.streamId);
+        if (!(await isAlreadyFinished(params.streamId, services))) {
+          // Запись не должна остаться в processing навсегда — её возьмут заново
+          // на следующем опросе (schedule.ts проверяет attempts).
+          await services.registry.patchStream(params.streamId, {
+            status: "failed",
+            reason: FAILURE_REASON,
+          });
+        }
       }
       throw error;
+    }
+  }
+
+  /**
+   * Убрать кадры записи после сбоя. Ошибка самой уборки уходит в журнал и не
+   * заслоняет сбой разбора, ради которого вызвана: пометка отказом и исходная
+   * ошибка важнее.
+   */
+  private async dropFrames(streamId: string): Promise<void> {
+    try {
+      await removeFrames(this.env.AUDIO, streamId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(`[разбор ${streamId}] не удалось убрать кадры: ${reason}`);
     }
   }
 
@@ -194,7 +224,11 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     // --- составление документа ---
     // В каждом проходе модель получает расшифровку целиком, но пишет только
     // свой участок: иначе отсылки внутри эфира теряют смысл.
-    const partCount = Math.max(1, Math.ceil(transcriptChars / CHARS_PER_PART));
+    // Проходов не меньше, чем нужно по кадрам: у эфира с редкой речью на проход
+    // иначе пришлось бы больше картинок, чем принимает запрос (`shared/frames.ts`).
+    // Ссылки на кадры живут в параметрах экземпляра и в результаты шагов не идут.
+    const frames = params.frames ?? [];
+    const partCount = Math.max(1, Math.ceil(transcriptChars / CHARS_PER_PART), minPassesForFrames(frames.length));
     // Отрезок эфира, который разбирает этот прогон: у части — не от нуля.
     const range = {
       startSeconds: params.partStartSeconds,
@@ -202,24 +236,37 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
     };
     const parts = planDocumentParts(range, params.categories, partCount);
 
-    const written: ParsedSection[] = [];
-    for (const [index, part] of parts.entries()) {
-      const composed = await step.do(`написать часть ${index + 1} из ${parts.length}`, async () => {
+    // Шаг называется иначе, чем до кадров («написать часть»): результат шага
+    // теперь не список разделов, а разделы с участками без кадров. Разбор,
+    // идущий в момент выпуска, не должен подхватить прежний результат под
+    // новым видом — его проходы просто составятся заново.
+    const composed = await composePasses({
+      parts,
+      frames,
+      stepName: (index, count) => `составить часть ${index + 1} из ${count}`,
+      // Десять минут по умолчанию — меньше, чем занимает проход модели на `max` (до 558 с на замерах плюс разброс).
+      step: (name, run) => step.do(name, { timeout: `${DOCUMENT_STEP_TIMEOUT_MINUTES} minutes` }, run),
+      compose: async ({ part, frames: passFrames, fallbacksLeft }) => {
         const object = await this.env.AUDIO.get(transcriptFullKey(params.streamId));
         if (object === null) throw new Error("склеенная расшифровка исчезла из хранилища");
-        return await composePart(services.models, {
-          transcript: await object.text(),
-          part,
-          publishedAt: params.publishedAt,
-          categories: params.categories,
-          streamerInfo,
-          // Ключ закрепления за провайдером на всю запись: проходы одной
-          // записи должны попадать на тот же узел, иначе кэш входа не сработает.
-          sessionId: params.streamId,
-        });
-      });
-      written.push(...composed.map((section) => ({ ...section, category: "" })));
-    }
+        return await composePart(
+          services.models,
+          {
+            transcript: await object.text(),
+            part,
+            publishedAt: params.publishedAt,
+            categories: params.categories,
+            streamerInfo,
+            frames: passFrames,
+            // Ключ закрепления за провайдером на всю запись: проходы одной
+            // записи должны попадать на тот же узел, иначе кэш входа не сработает.
+            sessionId: params.streamId,
+          },
+          { fallbacksLeft },
+        );
+      },
+    });
+    const written: ParsedSection[] = composed.sections.map((section) => ({ ...section, category: "" }));
 
     // --- разделы ---
     // Не шагом. Результат шага площадка хранит в состоянии экземпляра, и его
@@ -317,7 +364,11 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
         // разобранной записи остаётся висеть причина отказа прошлой попытки.
         // В пометке именно длительность: «один участок» может означать и
         // минуту тишины, и четыре часа потерянного эфира.
-        reason: gaps.length > 0 ? `Разделы не покрывают ${formatGaps(gaps)} эфира.` : "",
+        // Вторая пометка — сколько эфира документ писался без кадров (FR-015).
+        reason: composeReason(
+          gaps.length > 0 ? `Разделы не покрывают ${formatGaps(gaps)} эфира.` : "",
+          formatFramelessNote(framelessSeconds(range, frames, composed.withoutFrames)),
+        ),
       });
     });
 

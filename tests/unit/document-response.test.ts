@@ -67,6 +67,16 @@ describe("исходы ответа модели", () => {
     ).toBe("output_truncated");
   });
 
+  test("ошибка провайдера внутри ответа 200 — не документ и не повод переписывать без кадров", () => {
+    // OpenRouter: провайдер упал после начала ответа — статус 200, причина в finish_reason. Обрывок ответа
+    // не разбирается как документ, а код ошибки остаётся тем же, что у прочих отказов сервиса.
+    expect(
+      codeOf(() =>
+        readDocumentChoice({ finish_reason: "error", message: { content: '{"sections": [{"title": "обры', refusal: null } } as never),
+      ),
+    ).toBe("upstream_unavailable");
+  });
+
   test("ответ без вариантов — ошибка в теле при успешном статусе", () => {
     expect(codeOf(() => readDocumentChoice(undefined))).toBe("upstream_unavailable");
   });

@@ -86,13 +86,22 @@ export class AppError extends Error {
 }
 
 /**
+ * Адреса из текста ошибки заменяются заглушкой: ссылка на кадр в R2 — носитель
+ * доступа на шесть часов, а провайдер модели может процитировать её в своём
+ * сообщении об ошибке. Журнал не должен хранить такую ссылку.
+ */
+export function redactUrls(text: string): string {
+  return text.replace(/https?:\/\/\S+/g, "<адрес>");
+}
+
+/**
  * Ошибка внешнего сервиса: причина сохраняется в `cause`, наружу уходит
  * понятный текст. Причина ещё и пишется в журнал: внутри шага Workflow
  * наружу видно только текст ошибки, и без этой записи отказ внешнего
  * сервиса неотличим от любого другого — разбирать нечего.
  */
 export function upstreamError(service: string, cause: unknown): AppError {
-  const reason = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause);
+  const reason = redactUrls(cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause));
   console.error(`[${service}] ${reason}`);
   return new AppError("upstream_unavailable", `Сервис «${service}» сейчас недоступен.`, { cause });
 }

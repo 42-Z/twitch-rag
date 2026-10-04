@@ -12,6 +12,7 @@ import { Documents } from "../shared/documents.ts";
 import { OpenRouter } from "../shared/openrouter.ts";
 import { Twitch } from "../shared/twitch.ts";
 import { BoxRunner } from "../shared/box.ts";
+import type { Frame } from "../shared/frames.ts";
 
 export interface Env {
   // --- привязки платформы ---
@@ -69,6 +70,13 @@ export interface IngestParams {
   durationSeconds: number;
   categories: Array<{ title: string; startSeconds: number; endSeconds: number }>;
   chunks: Array<{ index: number; key: string; offsetSeconds: number; durationSeconds: number }>;
+  /**
+   * Кадры отрезка по возрастанию `atSeconds`: ссылки на объекты в R2, уже
+   * проверенные при приёме сигнала. Нет, когда кадров нет вовсе — прежняя
+   * программа конвейера, запись без видео, сбой добычи. Ссылки — носители
+   * доступа: ни в журнал, ни в результаты шагов они не пишутся.
+   */
+  frames?: Frame[];
 }
 
 export interface Services {

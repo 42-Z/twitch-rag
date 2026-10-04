@@ -1,4 +1,4 @@
-import { test, expect, describe, afterEach } from "vitest";
+import { test, expect, describe, afterEach, vi } from "vitest";
 import { handleIngestReady, requireIngestSecret } from "../../src/worker/routes/internal.ts";
 import { AppError } from "../../src/shared/errors.ts";
 import type { Env, Services } from "../../src/worker/env.ts";
@@ -455,5 +455,226 @@ describe("сигнал готовности части эфира", () => {
       services,
     );
     expect(captured.patched.map((item) => item.vodId)).toEqual([`${VOD}-p2`]);
+  });
+});
+
+describe("кадры в сигнале готовности", () => {
+  const VOD = "2873255697";
+  const R2 = "acct.r2.cloudflarestorage.com";
+
+  /** Подписанная ссылка так, как её отдаёт бокс: хост R2, путь кадров записи, подпись в запросе. */
+  const link = (streamId: string, atSeconds: number, host = R2): string =>
+    `https://${host}/twitch-audio/frames/${streamId}/frame-${String(atSeconds).padStart(6, "0")}.jpg` +
+    "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=21600&X-Amz-Signature=abc123";
+  const own = (atSeconds: number, streamId = VOD) => ({ atSeconds, url: link(streamId, atSeconds) });
+
+  function capture(): { env: Env; created: Array<{ id: string; params: Record<string, unknown> }> } {
+    const created: Array<{ id: string; params: Record<string, unknown> }> = [];
+    const env = {
+      INGEST_SECRET: "shared-secret",
+      INGEST: {
+        create: async (input: { id: string; params: Record<string, unknown> }) => {
+          created.push(input);
+          return { id: input.id };
+        },
+        get: async () => {
+          throw new Error("not found");
+        },
+      },
+    } as unknown as Env;
+    return { env, created };
+  }
+
+  /** Сигнал целой записи (0 … 19 019 с) с заданными кадрами; возвращает ответ и параметры разбора. */
+  async function signal(frames: unknown, overrides: Record<string, unknown> = {}) {
+    const { env, created } = capture();
+    const payload = body({ ...(frames === undefined ? {} : { frames }), ...overrides });
+    const response = await handleIngestReady(request(payload), env, fakeServices());
+    return { response, params: created[0]?.params };
+  }
+
+  const framesOf = (params: Record<string, unknown> | undefined) =>
+    params?.["frames"] as Array<{ atSeconds: number; url: string }> | undefined;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("сигнал прежнего вида, без поля кадров — разбор принят, поля frames в параметрах нет", async () => {
+    const { response, params } = await signal(undefined);
+
+    expect(response.status).toBe(202);
+    expect(params).toBeDefined();
+    expect("frames" in (params as object)).toBe(false);
+  });
+
+  test("пустой список кадров равен отсутствию поля", async () => {
+    const { response, params } = await signal([]);
+
+    expect(response.status).toBe(202);
+    expect("frames" in (params as object)).toBe(false);
+  });
+
+  test("годные кадры доходят до параметров разбора как есть, по возрастанию времени", async () => {
+    const { response, params } = await signal([own(360), own(0), own(180)]);
+
+    expect(response.status).toBe(202);
+    expect(framesOf(params)).toEqual([own(0), own(180), own(360)]);
+  });
+
+  test("из пяти кадров три негодных — остаются два, сигнал принят", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { response, params } = await signal([
+      own(0),
+      { atSeconds: 180, url: link(VOD, 180, "evil.example") },
+      { atSeconds: 360, url: link(VOD, 360).replace("https:", "http:") },
+      own(540, "9999999999"),
+      own(720),
+    ]);
+
+    expect(response.status).toBe(202);
+    expect(framesOf(params)?.map((frame) => frame.atSeconds)).toEqual([0, 720]);
+  });
+
+  test.each([
+    ["чужой порт", `https://${R2}:8443/twitch-audio/frames/${VOD}/frame-000180.jpg?X-Amz-Signature=a`],
+    ["хост только похож на R2", `https://evil-r2.cloudflarestorage.com/twitch-audio/frames/${VOD}/frame-000180.jpg`],
+    ["R2 лишь в пути чужого хоста", `https://evil.example/r2.cloudflarestorage.com/frames/${VOD}/frame-000180.jpg`],
+    ["R2 лишь в начале чужого хоста", `https://r2.cloudflarestorage.com.evil.example/frames/${VOD}/frame-000180.jpg`],
+    ["выход из каталога записи через ..", `https://${R2}/twitch-audio/frames/${VOD}/../../frames/other/frame-000180.jpg`],
+    ["каталог кадров другой записи", link("2873255698", 180)],
+    ["не ссылка", "это не адрес"],
+    ["схема не https", `ftp://${R2}/twitch-audio/frames/${VOD}/frame-000180.jpg`],
+  ])("ссылка отброшена: %s", async (_case, url) => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { response, params } = await signal([own(0), { atSeconds: 180, url }]);
+
+    expect(response.status).toBe(202);
+    expect(framesOf(params)).toEqual([own(0)]);
+  });
+
+  test.each([
+    ["время не целое", { atSeconds: 1.5, url: link(VOD, 1) }],
+    ["время отрицательное", { atSeconds: -180, url: link(VOD, 0) }],
+    ["время строкой", { atSeconds: "180", url: link(VOD, 180) }],
+    ["адреса нет", { atSeconds: 180 }],
+    ["адрес пустой", { atSeconds: 180, url: "" }],
+    ["адрес не строка", { atSeconds: 180, url: 42 }],
+    ["адрес длиннее предела", { atSeconds: 180, url: `${link(VOD, 180)}&pad=${"x".repeat(1000)}` }],
+    ["запись не объект", "кадр"],
+    ["запись null", null],
+  ])("запись отброшена: %s", async (_case, entry) => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { response, params } = await signal([own(0), entry]);
+
+    expect(response.status).toBe(202);
+    expect(framesOf(params)).toEqual([own(0)]);
+  });
+
+  test("кадры вне отрезка записи отброшены: до начала, на конце и за ним", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // Запись — 0 … 19 019 с; конец отрезка в него не входит.
+    const { params } = await signal([own(0), own(19018), own(19019), own(30000)]);
+
+    expect(framesOf(params)?.map((frame) => frame.atSeconds)).toEqual([0, 19018]);
+  });
+
+  test("у части эфира отрезок — от её начала, и кадры считаются в нём", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const part = `${VOD}-p2`;
+    const created: Array<{ id: string; params: Record<string, unknown> }> = [];
+    const env = {
+      INGEST_SECRET: "shared-secret",
+      INGEST: {
+        create: async (input: { id: string; params: Record<string, unknown> }) => {
+          created.push(input);
+          return { id: input.id };
+        },
+        get: async () => {
+          throw new Error("not found");
+        },
+      },
+    } as unknown as Env;
+    const services = {
+      registry: {
+        getStream: async (id: string) =>
+          id === part
+            ? { streamId: id, vodId: VOD, part: 2, partCount: 3, partStartSeconds: 21600, source: "auto", attempts: 1 }
+            : undefined,
+        putStream: async () => undefined,
+        patchStream: async () => undefined,
+      },
+    } as unknown as Services;
+
+    // Вторая часть — 21 600 … 32 400 с.
+    const payload = body({
+      streamId: part,
+      partStartSeconds: 21600,
+      durationSeconds: 10800,
+      chunks: [{ index: 0, key: `audio/${part}/chunk-0000.m4a`, offsetSeconds: 21600, durationSeconds: 1200 }],
+      frames: [own(18000, part), own(21600, part), own(32399, part), own(32400, part), own(21600, VOD)],
+    });
+    const response = await handleIngestReady(request(payload), env, services);
+
+    expect(response.status).toBe(202);
+    // 18 000 — до части, 32 400 — её конец, последний кадр лежит в каталоге целой записи, а не части.
+    expect(framesOf(created[0]?.params)?.map((frame) => frame.atSeconds)).toEqual([21600, 32399]);
+  });
+
+  test("повтор той же секунды: остаётся первый кадр", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const first = { atSeconds: 180, url: link(VOD, 180) };
+    const second = { atSeconds: 180, url: `${link(VOD, 180)}&second=1` };
+
+    const { params } = await signal([first, second]);
+
+    expect(framesOf(params)).toEqual([first]);
+  });
+
+  test("больше 400 записей — остаются первые 400 по времени, а не по порядку в сигнале", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // 450 кадров по секунде, присланных в обратном порядке: по порядку в сигнале «первыми» были бы поздние.
+    const reversed = Array.from({ length: 450 }, (_, index) => own(449 - index));
+
+    const { response, params } = await signal(reversed);
+
+    expect(response.status).toBe(202);
+    const frames = framesOf(params) ?? [];
+    expect(frames).toHaveLength(400);
+    expect(frames[0]?.atSeconds).toBe(0);
+    expect(frames[399]?.atSeconds).toBe(399);
+  });
+
+  test.each([["строка", "frames"], ["объект", { atSeconds: 0 }], ["число", 5], ["null", null]])(
+    "поле кадров не массив (%s) — разбор принят без кадров",
+    async (_case, value) => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const { response, params } = await signal(value);
+
+      expect(response.status).toBe(202);
+      expect("frames" in (params as object)).toBe(false);
+    },
+  );
+
+  test("в журнал идёт число отброшенных кадров, а не их ссылки", async () => {
+    // Ссылка с подписью — носитель доступа: журнал её не хранит.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await signal([own(0), { atSeconds: 180, url: link(VOD, 180, "evil.example") }]);
+
+    const written = warn.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(written).toContain("кадров отброшено при приёме: 1");
+    expect(written).not.toContain("evil.example");
+    expect(written).not.toContain("X-Amz-Signature");
+    expect(written).not.toContain(R2);
+  });
+
+  test("кадры сигнала не попадают в запись реестра", async () => {
+    const { env } = capture();
+    const captured: Captured = { patched: [], put: [] };
+
+    await handleIngestReady(request(body({ frames: [own(0), own(180)] })), env, fakeServices(captured));
+
+    expect(JSON.stringify(captured.put)).not.toContain("X-Amz-Signature");
+    expect(captured.put.every((record) => !("frames" in record))).toBe(true);
   });
 });

@@ -13,6 +13,9 @@
  *   node --env-file=.env specs/002-document-quality/research/scripts/transcript.ts \
  *     --vod 2875806701 --from 20:00 --to 90:00
  *
+ * Необязательный `--language ru` передаёт распознаванию подсказку языка (в боевом разборе её нет:
+ * см. комментарий в `src/worker/workflow.ts`); файлы тогда получают суффикс `-ru` в имени.
+ *
  * Нужны во внешнем окружении: OPENROUTER_API_KEY, а также yt-dlp и ffmpeg.
  */
 
@@ -61,16 +64,20 @@ async function run(command: string, args: string[]): Promise<void> {
 const vod = arg("vod");
 const from = clock(arg("from"));
 const to = clock(arg("to"));
+/** Необязательная подсказка языка: боевой код её не передаёт, здесь она нужна для сравнения. */
+const languageIndex = process.argv.indexOf("--language");
+const languageHint = languageIndex === -1 ? undefined : process.argv[languageIndex + 1];
 const key = process.env["OPENROUTER_API_KEY"] ?? "";
 if (key === "") throw new Error("нет OPENROUTER_API_KEY");
 
 const researchDir = path.resolve(import.meta.dirname, "..");
 const dataDir = path.join(researchDir, "data");
-const workDir = path.join(dataDir, "work", vod);
+const label = `${vod}-${from}-${to}${languageHint === undefined ? "" : `-${languageHint}`}`;
+// Каталог у каждого участка свой: два участка одной записи можно распознавать одновременно.
+const workDir = path.join(dataDir, "work", label);
 await rm(workDir, { recursive: true, force: true });
 await mkdir(workDir, { recursive: true });
 
-const label = `${vod}-${from}-${to}`;
 const url = `https://www.twitch.tv/videos/${vod}`;
 
 // Сведения о записи: название нужно проверкам промпта, главы — категориям.
@@ -120,6 +127,7 @@ for (const chunk of chunks) {
   form.append("model", MODEL);
   form.append("response_format", "verbose_json");
   form.append("timestamp_granularities[]", "segment");
+  if (languageHint !== undefined) form.append("language", languageHint);
 
   const started = Date.now();
   const response = await fetch(API, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });

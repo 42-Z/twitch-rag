@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach } from "vitest";
-import { Knowledge } from "../../src/shared/knowledge.ts";
+import { Knowledge, chunkId } from "../../src/shared/knowledge.ts";
 import { AppError } from "../../src/shared/errors.ts";
 
 /**
@@ -71,4 +71,59 @@ describe("префикс уборки знаний", () => {
       expect(sent).toHaveLength(0);
     },
   );
+});
+
+/**
+ * Повторный разбор заменяет знания записи: новые куски пишутся первыми, а
+ * прежние, которых среди них нет, вычищаются шагом «убрать куски прошлого
+ * разбора» (`removeExcept`). Кадры этого не меняют — они в куски не попадают, —
+ * но замена должна работать и у документа, составленного с кадрами.
+ */
+describe("замена знаний прошлого разбора", () => {
+  const id = (section: number, chunk = 0) => chunkId("2878430068", section, chunk);
+
+  test("уходят только куски, которых нет среди свежих, — по всем страницам обхода", async () => {
+    const pages = [
+      { nextCursor: "100", vectors: [{ id: id(0) }, { id: id(1) }] },
+      { nextCursor: "", vectors: [{ id: id(2) }, { id: id(3) }] },
+    ];
+    const sent = stubVector((url) => (url.endsWith("/range") ? pages.shift() : { deleted: 2 }));
+
+    const removed = await knowledge().removeExcept("2878430068", new Set([id(0), id(2)]));
+
+    expect(removed).toBe(2);
+    const deletions = sent.filter((item) => item.url.endsWith("/delete"));
+    expect(deletions).toHaveLength(1);
+    expect(deletions[0]?.body).toEqual({ ids: [id(1), id(3)] });
+  });
+
+  test("удаление идёт после обхода целиком, а не посреди него", async () => {
+    // Удаление по ходу сдвигало бы страницы под обходом и пропускало куски.
+    const pages = [
+      { nextCursor: "100", vectors: [{ id: id(1) }] },
+      { nextCursor: "", vectors: [{ id: id(2) }] },
+    ];
+    const sent = stubVector((url) => (url.endsWith("/range") ? pages.shift() : { deleted: 2 }));
+
+    await knowledge().removeExcept("2878430068", new Set());
+
+    expect(sent.map((item) => item.url.split("/").pop())).toEqual(["range", "range", "delete"]);
+  });
+
+  test("нечего убирать — удаления нет, и счёт нулевой", async () => {
+    const sent = stubVector(() => ({ nextCursor: "", vectors: [{ id: id(0) }, { id: id(1) }] }));
+
+    const removed = await knowledge().removeExcept("2878430068", new Set([id(0), id(1)]));
+
+    expect(removed).toBe(0);
+    expect(sent.some((item) => item.url.endsWith("/delete"))).toBe(false);
+  });
+
+  test("обход идёт по префиксу своей записи и берёт страницами по сто", async () => {
+    const sent = stubVector(() => emptyPage);
+
+    await knowledge().removeExcept("2878430068", new Set());
+
+    expect(sent[0]?.body).toMatchObject({ prefix: "2878430068:", limit: 100 });
+  });
 });
