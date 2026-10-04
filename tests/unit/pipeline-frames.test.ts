@@ -121,6 +121,12 @@ describe("плейлист", () => {
     expect(() => parsePlaylist("#EXTINF:0.000,\n0.ts", PLAYLIST_URL)).toThrow();
   });
 
+  test("плейлист с частями общего файла или без заголовка инициализации не поддерживается", () => {
+    // RFC 8216: BYTERANGE — сегмент лежит внутри большого файла, MAP — без заголовка инициализации он не декодируется.
+    expect(() => parsePlaylist("#EXTM3U\n#EXTINF:10.000,\n#EXT-X-BYTERANGE:1000@0\nall.ts", PLAYLIST_URL)).toThrow(/BYTERANGE/);
+    expect(() => parsePlaylist('#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:10.000,\n0.m4s', PLAYLIST_URL)).toThrow(/MAP/);
+  });
+
   test("пустой плейлист — пустой список", () => {
     expect(parsePlaylist("", PLAYLIST_URL)).toEqual([]);
     expect(parsePlaylist("#EXTM3U\n#EXT-X-ENDLIST", PLAYLIST_URL)).toEqual([]);
@@ -284,6 +290,53 @@ describe("добыча кадров", () => {
 
     expect(frames.map((frame) => frame.atSeconds)).not.toContain(810);
     expect(frames).toHaveLength(9);
+  });
+
+  test("три кадра подряд не удались — добыча останавливается, кадры до сбоя остаются", async () => {
+    // Окна дают сегменты 9, 27, 45, 63, 81…: первые два удаются, дальше площадка сегменты не отдаёт.
+    const { io } = fakeIo();
+    const ok = io.fetchBytes;
+    const attempts: string[] = [];
+    io.fetchBytes = async (url) => {
+      attempts.push(url);
+      if (url.endsWith("/9.ts") || url.endsWith("/27.ts")) return await ok(url);
+      throw new Error("площадка ответила 404");
+    };
+    const logged: string[] = [];
+
+    const { frames, planned } = await collectFrames({ source: SOURCE, range: RANGE, io, log: (m) => logged.push(m) });
+
+    expect(planned).toBe(10);
+    expect(frames.map((frame) => frame.atSeconds)).toEqual([90, 270]);
+    // Два удавшихся и три неудавшихся обращения; остальные пять окон не пробовались.
+    expect(attempts).toHaveLength(5);
+    expect(logged.at(-1)).toContain("остановлена");
+  });
+
+  test("сбои вразбивку добычу не останавливают: счётчик подряд идущих сбрасывается удачным кадром", async () => {
+    const { io } = fakeIo({ badSegment: "/27.ts" });
+    const fine = io.fetchBytes;
+    // Кадры на 270 и 630 с не скачиваются, остальные удаются: подряд ни разу не три.
+    io.fetchBytes = async (url) => {
+      if (url.endsWith("/63.ts")) throw new Error("площадка ответила 404");
+      return await fine(url);
+    };
+
+    const { frames } = await collectFrames({ source: SOURCE, range: RANGE, io, log: () => undefined });
+
+    expect(frames).toHaveLength(8);
+  });
+
+  test("окна без сегмента и окна на уже взятый сегмент на счёт сбоев подряд не влияют", async () => {
+    // Плейлист кончается на 150-й секунде: окна с третьего без сегмента — это конец записи, а не сбой площадки.
+    const short = ["#EXTM3U", ...Array.from({ length: 15 }, (_, index) => `#EXTINF:10.000,\n${index}.ts`)].join("\n");
+    const { io } = fakeIo({ playlist: short });
+    const logged: string[] = [];
+
+    const { frames } = await collectFrames({ source: SOURCE, range: RANGE, io, log: (m) => logged.push(m) });
+
+    expect(frames.map((frame) => frame.atSeconds)).toEqual([90]);
+    expect(logged.some((line) => line.includes("остановлена"))).toBe(false);
   });
 
   test("плейлист не открылся — пустой список без исключения", async () => {

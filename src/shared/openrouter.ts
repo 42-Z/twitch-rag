@@ -154,14 +154,12 @@ export function buildDocumentPartParams(request: DocumentPartRequest): DocumentP
   };
 }
 
-export type DocumentNameParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & OpenRouterExtras;
-
 /** Параметры запроса имени документа — чистая сборка, как у `buildDocumentPartParams`. */
 export function buildDocumentNameParams(input: {
   publishedAt: string;
   sectionTitles: readonly string[];
   sessionId: string;
-}): DocumentNameParams {
+}): DocumentPartParams {
   return {
     model: MODELS.document,
     max_completion_tokens: MAX_OUTPUT_TOKENS,
@@ -238,8 +236,12 @@ export class OpenRouter {
     const params = buildDocumentPartParams(request);
 
     try {
+      // Повторов клиента нет: он повторяет и оборванный по таймауту запрос, три раза по двадцать минут
+      // не уложились бы в тридцать минут шага, а каждый повтор на `max` оплачивается заново. Отказы
+      // 429 и 5xx повторяет сам шаг Workflow.
       const response = await this.client.chat.completions.create(params, {
         timeout: DOCUMENT_REQUEST_TIMEOUT_MINUTES * 60_000,
+        maxRetries: 0,
       });
       return readDocumentChoice(response.choices?.[0]);
     } catch (error) {
@@ -388,6 +390,10 @@ function requireMessage(choice: CompletionChoice | undefined): { refusal?: strin
   }
   if (choice.finish_reason === "content_filter") {
     throw new AppError("model_refused", "Модель отказалась составлять документ: сработала модерация.");
+  }
+  if ((choice.finish_reason as string) === "error") {
+    // OpenRouter: провайдер упал после начала ответа — статус 200, а причина в `finish_reason`.
+    throw new AppError("upstream_unavailable", "Провайдер модели оборвал ответ ошибкой.");
   }
   if (choice.finish_reason === "length") {
     throw new AppError("output_truncated", "Ответ модели оборван потолком выхода: он неполон.");

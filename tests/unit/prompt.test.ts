@@ -166,7 +166,7 @@ describe("сообщение об участке с кадрами", () => {
   });
 
   test("с кадрами текст идёт первым, дальше пары «подпись — картинка» в порядке кадров", () => {
-    const content = buildPartContent(PART, [frame(1890), frame(2070), frame(2250)]);
+    const content = buildPartContent(PART, [frame(1890), frame(2070), frame(2250)], "");
 
     expect(Array.isArray(content)).toBe(true);
     const items = content as Exclude<typeof content, string>;
@@ -218,7 +218,7 @@ describe("сообщение об участке с кадрами", () => {
     expect(all.match(/\[1890\] три/g)).toHaveLength(1);
   });
 
-  test("если речи до кадра нет, перед ним только подпись; без расшифровки раскладка прежняя", () => {
+  test("если речи до кадра нет, перед ним только подпись; без строк участка остаются текст, подписи и картинки", () => {
     const items = buildPartContent(PART, [frame(1800)], "[1900] речь") as Array<{ type: string; text?: string }>;
 
     expect(items[1]?.text).toBe("Кадр, 1800 с:");
@@ -249,7 +249,7 @@ describe("сообщение об участке с кадрами", () => {
 
   test("120 кадров — ровно 50 картинок, первый и последний на месте", () => {
     const frames = frameRange(120);
-    const items = buildPartContent(PART, frames) as Array<{ type: string; image_url?: { url: string } }>;
+    const items = buildPartContent(PART, frames, "") as Array<{ type: string; image_url?: { url: string } }>;
     const images = items.filter((item) => item.type === "image_url");
 
     expect(images).toHaveLength(MAX_FRAMES_PER_REQUEST);

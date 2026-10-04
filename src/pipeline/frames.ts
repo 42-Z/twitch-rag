@@ -18,6 +18,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { redactUrls } from "../shared/errors.ts";
 import { frameWindows, type Frame } from "../shared/frames.ts";
 import type { TimeRange } from "../shared/categories.ts";
 import type { FrameSource } from "./media.ts";
@@ -40,6 +41,15 @@ export interface Segment {
 const FRAME_MAX_WIDTH = 1280;
 const PLAYLIST_TIMEOUT_MS = 30_000;
 const SEGMENT_TIMEOUT_MS = 60_000;
+/** Кадр из сегмента снимается за доли секунды: зависший `ffmpeg` не должен держать сигнал готовности. */
+const FFMPEG_TIMEOUT_MS = 30_000;
+/**
+ * Сколько кадров подряд могут не удаться, прежде чем добыча остановится. Каждый
+ * неудавшийся кадр — четыре попытки с паузами, и если площадка закрыла сегменты
+ * или молчит, 115 окон задержали бы сигнал готовности, а с ним и распознавание
+ * звука, на минуты или часы. Одиночный сбой кадр лишь пропускает (FR-016).
+ */
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
  * Сегменты плейлиста. Начало сегмента — сумма длительностей предыдущих
@@ -53,6 +63,11 @@ export function parsePlaylist(text: string, playlistUrl: string): Segment[] {
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line === "") continue;
+    if (line.startsWith("#EXT-X-BYTERANGE") || line.startsWith("#EXT-X-MAP")) {
+      // RFC 8216, 4.3.2.2 и 4.3.2.5: сегмент — часть общего файла либо без заголовка инициализации не
+      // декодируется. Целый файл на каждый кадр не скачать, а без заголовка `ffmpeg` кадра не отдаст: лучше без кадров.
+      throw new Error("плейлист с #EXT-X-BYTERANGE или #EXT-X-MAP не поддерживается");
+    }
     if (line.startsWith("#EXTINF:")) {
       // `#EXTINF:<длительность>,[<название>]`: parseFloat останавливается на запятой.
       const duration = Number.parseFloat(line.slice("#EXTINF:".length));
@@ -108,7 +123,7 @@ export function extractFrame(segment: Bytes): Promise<Bytes> {
         "-f", "mjpeg",
         "pipe:1",
       ],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      { stdio: ["pipe", "pipe", "pipe"], timeout: FFMPEG_TIMEOUT_MS },
     );
 
     const output: Buffer[] = [];
@@ -163,8 +178,7 @@ export function createFrameIo(storage: Pick<FrameIo, "upload" | "sign">): FrameI
 
 /** Текст ошибки для журнала: адреса в нём — носители доступа, их убирает эта функция, а не надежда на авторов ошибок. */
 export function describeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/https?:\/\/\S+/g, "<адрес>");
+  return redactUrls(error instanceof Error ? error.message : String(error));
 }
 
 export interface CollectedFrames {
@@ -201,22 +215,35 @@ export async function collectFrames(options: {
 
   const frames: Frame[] = [];
   const taken = new Set<number>();
+  let failedInRow = 0;
   for (const window of windows) {
-    try {
-      const segment = segmentAt(segments, window.momentSeconds);
-      if (segment === undefined) throw new Error("в плейлисте нет сегмента на этот момент");
-      const atSeconds = Math.floor(segment.startSeconds);
-      // Два окна на один сегмент дали бы один ключ и две записи с одной секундой.
-      if (taken.has(atSeconds)) throw new Error("сегмент уже взят другим окном");
+    const segment = segmentAt(segments, window.momentSeconds);
+    if (segment === undefined) {
+      log(`кадр на ${window.momentSeconds} с пропущен: в плейлисте нет сегмента на этот момент`);
+      continue;
+    }
+    const atSeconds = Math.floor(segment.startSeconds);
+    // Два окна на один сегмент дали бы один ключ и две записи с одной секундой.
+    if (taken.has(atSeconds)) {
+      log(`кадр на ${window.momentSeconds} с пропущен: сегмент уже взят другим окном`);
+      continue;
+    }
 
+    try {
       const bytes = await io.extractFrame(await io.fetchBytes(segment.url));
       if (!isJpeg(bytes)) throw new Error("ffmpeg не вернул JPEG");
 
       const url = await io.sign(await io.upload(atSeconds, bytes));
       taken.add(atSeconds);
       frames.push({ atSeconds, url });
+      failedInRow = 0;
     } catch (error) {
       log(`кадр на ${window.momentSeconds} с пропущен: ${describeError(error)}`);
+      failedInRow += 1;
+      if (failedInRow >= MAX_CONSECUTIVE_FAILURES) {
+        log(`добыча кадров остановлена: ${failedInRow} кадра подряд не удались`);
+        break;
+      }
     }
   }
   return { frames, planned: windows.length };
