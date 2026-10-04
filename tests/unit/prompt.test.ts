@@ -15,7 +15,15 @@ import {
   buildStreamerInfoPart,
   buildTranscriptMessage,
 } from "../../src/shared/prompt.ts";
-import { buildDocumentPartParams, type DocumentPartRequest } from "../../src/shared/openrouter.ts";
+import {
+  DOCUMENT_REQUEST_TIMEOUT_MINUTES,
+  DOCUMENT_STEP_TIMEOUT_MINUTES,
+  MAX_OUTPUT_TOKENS,
+  MODELS,
+  buildDocumentNameParams,
+  buildDocumentPartParams,
+  type DocumentPartRequest,
+} from "../../src/shared/openrouter.ts";
 import { FRAME_INTERVAL_SECONDS, MAX_FRAMES_PER_REQUEST, type Frame } from "../../src/shared/frames.ts";
 
 /**
@@ -449,6 +457,37 @@ describe("параметры запроса прохода", () => {
     );
     expect(params.messages[2]?.role).toBe("user");
     expect(params.messages[2]?.content).toBe(buildPartMessage(PART));
+  });
+
+  test("модель — GPT-6 Luna на максимальном уровне, без температуры, потолок выхода по каталогу", () => {
+    const params = buildDocumentPartParams(request);
+
+    expect(params.model).toBe("openai/gpt-6-luna");
+    expect(params.reasoning).toEqual({ effort: "max" });
+    // Параметра у модели нет, а provider.require_parameters отвергнет запрос с ним.
+    expect(params).not.toHaveProperty("temperature");
+    expect(params.max_completion_tokens).toBe(128000);
+    expect(params.provider).toEqual({ require_parameters: true });
+  });
+
+  test("имя документа просится у той же модели и с теми же настройками", () => {
+    const params = buildDocumentNameParams({
+      publishedAt: request.publishedAt,
+      sectionTitles: ["Выборы и новые люди"],
+      sessionId: request.sessionId,
+    });
+
+    expect(params.model).toBe(MODELS.document);
+    expect(params.reasoning).toEqual({ effort: "max" });
+    expect(params).not.toHaveProperty("temperature");
+    expect(params.max_completion_tokens).toBe(MAX_OUTPUT_TOKENS);
+  });
+
+  test("ожидание ответа клиентом и шагом больше самого долгого замеренного прохода, шаг ждёт дольше клиента", () => {
+    const longestMeasuredPassSeconds = 558;
+
+    expect(DOCUMENT_REQUEST_TIMEOUT_MINUTES * 60).toBeGreaterThan(longestMeasuredPassSeconds);
+    expect(DOCUMENT_STEP_TIMEOUT_MINUTES).toBeGreaterThan(DOCUMENT_REQUEST_TIMEOUT_MINUTES);
   });
 
   test("пустой список кадров — тот же прежний запрос", () => {

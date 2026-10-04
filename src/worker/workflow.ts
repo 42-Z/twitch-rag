@@ -23,7 +23,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import type { Env, IngestParams, Services } from "./env.ts";
 import { createServices } from "./env.ts";
 import { shiftSegments, prevailingLanguage, formatDuration } from "../shared/time.ts";
-import { renderTranscript } from "../shared/openrouter.ts";
+import { DOCUMENT_STEP_TIMEOUT_MINUTES, renderTranscript } from "../shared/openrouter.ts";
 import { planDocumentParts, assignCategories, uniqueCategories, findCoverageGaps } from "../shared/categories.ts";
 import { withPartLabel } from "../shared/document-name.ts";
 import { normalizeSections, type ParsedSection } from "../shared/sections.ts";
@@ -40,9 +40,11 @@ import { removeFrames, removeTemporary } from "./temporary.ts";
  * Значение выбрано замером, а не по запасу потолка: доля сказанного, которая
  * доходит до документа, падает с ростом прохода — на семидесяти минутах эфира
  * это 51 % и восемь потерянных мест, на сорока 68 % и ни одной потери, на
- * тридцати 64 % и ниже уже не растёт. Потолок выхода тут ни при чём: расход
- * прохода — тысячи токенов из девятисот тысяч возможных, ограничивает не он,
- * а склонность модели сжимать тем сильнее, чем больше перед ней текста.
+ * тридцати 64 % и ниже уже не растёт. Эти замеры сняты на прежней модели, где
+ * потолок выхода был ни при чём: ограничивала склонность модели сжимать тем
+ * сильнее, чем больше перед ней текста. У GPT-6 Luna на `max` проход тратит до
+ * 82 тысяч токенов из 128 тысяч возможных — при росте прохода потолок станет
+ * вторым ограничением.
  *
  * Плата за мельче — вдвое больше вызовов модели и швов между проходами;
  * вызов стоит доли цента, а швы приходятся на смену темы.
@@ -242,7 +244,8 @@ export class StreamIngestWorkflow extends WorkflowEntrypoint<Env, IngestParams> 
       parts,
       frames,
       stepName: (index, count) => `составить часть ${index + 1} из ${count}`,
-      step: (name, run) => step.do(name, run),
+      // Десять минут по умолчанию — меньше, чем занимает проход модели на `max` (до 558 с на замерах плюс разброс).
+      step: (name, run) => step.do(name, { timeout: `${DOCUMENT_STEP_TIMEOUT_MINUTES} minutes` }, run),
       compose: async ({ part, frames: passFrames, fallbacksLeft }) => {
         const object = await this.env.AUDIO.get(transcriptFullKey(params.streamId));
         if (object === null) throw new Error("склеенная расшифровка исчезла из хранилища");
