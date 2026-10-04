@@ -13,6 +13,9 @@
  *   node --env-file=.env specs/002-document-quality/research/scripts/transcript.ts \
  *     --vod 2875806701 --from 20:00 --to 90:00
  *
+ * Необязательный `--language ru` передаёт распознаванию подсказку языка (в боевом разборе её нет:
+ * см. комментарий в `src/worker/workflow.ts`); файлы тогда получают суффикс `-ru` в имени.
+ *
  * Нужны во внешнем окружении: OPENROUTER_API_KEY, а также yt-dlp и ffmpeg.
  */
 
