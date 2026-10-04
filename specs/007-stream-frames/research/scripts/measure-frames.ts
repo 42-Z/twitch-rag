@@ -172,6 +172,10 @@ const effortOverride = arg("effort", "");
 /** Потолок токенов выхода одного прохода (рассуждение входит): верхняя граница цены прогона. */
 const maxOutputOverride = Number(arg("max-output", "0"));
 const providerOverride = arg("provider", "");
+const onlyPasses = arg("only-pass", "")
+  .split(",")
+  .filter((item) => item !== "")
+  .map(Number);
 const runLabel = `${label}${partMinutes === 0 ? "" : `-part${partMinutes}`}${tag === "" ? "" : `-${tag}`}`;
 
 interface TranscriptReport {
@@ -305,6 +309,9 @@ for (const variant of chosen) {
   let cost = 0;
 
   for (const [index, part] of parts.entries()) {
+    // `--only-pass 2,3` — гонять только эти проходы (счёт с единицы): правка инструкции проверяется на
+    // проходе, где лежат известные места, а не на всей записи. Документ получается неполным.
+    if (onlyPasses.length > 0 && !onlyPasses.includes(index + 1)) continue;
     const request: DocumentPartRequest = {
       fullTranscript: transcript,
       part,

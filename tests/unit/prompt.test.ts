@@ -385,7 +385,14 @@ describe("точность смысла в инструкции с кадрам�
     expect(PROMPT_FRAMES).toContain("## Кто говорит");
     expect(PROMPT_FRAMES).toContain("только когда это видно");
     expect(PROMPT_FRAMES).toContain("Не видно, кто произнёс, — без автора");
-    expect(PROMPT_FRAMES).toContain("принадлежит автору записи");
+    expect(PROMPT_FRAMES).toContain("принадлежат автору записи");
+  });
+
+  test("говорящего определяют по смыслу: автор записи, участник истории, передразнивание, сторона спора", () => {
+    expect(PROMPT_FRAMES).toContain("говорящего ты определяешь сам");
+    expect(PROMPT_FRAMES).toContain("Участник истории — не обязательно стример");
+    expect(PROMPT_FRAMES).toContain("Передразнивание — не взгляд");
+    expect(PROMPT_FRAMES).toContain("у каждого утверждения своя сторона");
   });
 
   test("шум распознавания не становится событием, число — единицей, которой нет на экране", () => {
