@@ -17,6 +17,12 @@ const FRAGMENTS = ["2875806701-1200-5400", "2872271642-4900-10500", "2872271642-
 const standDir = new URL("../../../007-stream-frames/research/data/", import.meta.url);
 const H = /^## (.+?)\s*\[(\d+):(\d\d):(\d\d)\s*—\s*(\d+):(\d\d):(\d\d)(?:\s*·[^\]]*)?\]\s*$/;
 
+/** Длина фрагмента в секундах по метке `<эфир>-<от>-<до>`; у боевых документов метки времени нет. */
+const spanOf = (label) => {
+  const m = label.match(/-(\d+)-(\d+)$/);
+  return m === null ? undefined : +m[2] - +m[1];
+};
+
 /** Строки сводки: `group` — метка прогона стенда или «боевые»; `secs` — размеры разделов; у стенда ещё проходы и цена. */
 const rows = [];
 const tags = flag("tag");
@@ -32,6 +38,10 @@ if (tags !== undefined) {
         id: fragment,
         secs: sections.map((s) => ({ title: s.title, sec: s.endSeconds - s.startSeconds, chars: s.text.length })),
         passes: record.passes?.length,
+        // Проход, оборванный провайдером, документа не ломает, но оставляет дыру: без этой отметки прогон
+        // выглядит полным, а размеры считаются по неполному покрытию.
+        failed: record.passes?.filter((pass) => pass.failure).length ?? 0,
+        span: spanOf(fragment),
         cost: record.costUsd,
       });
     }
@@ -60,6 +70,7 @@ if (tags !== undefined) {
 const q = (a, p) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(p * (s.length - 1))]; };
 const mean = (a) => Math.round(a.reduce((x, y) => x + y, 0) / a.length);
 const share = (a, f) => (100 * a.filter(f).length / a.length).toFixed(1);
+const covered = (r) => r.secs.reduce((sum, section) => sum + section.sec, 0);
 const price = (x) => (x === undefined ? "" : `, цена $${x.toFixed(6)}`);
 for (const group of [...new Set(rows.map((r) => r.group))]) {
   const part = rows.filter((r) => r.group === group);
@@ -72,6 +83,8 @@ for (const group of [...new Set(rows.map((r) => r.group))]) {
       `секунд: средний ${mean(t)}, медиана ${q(t, .5)}, p10 ${q(t, .1)}, p90 ${q(t, .9)}, короче 120 с ${share(t, (x) => x < 120)} %`,
       `знаков: медиана ${q(c, .5)}, p10 ${q(c, .1)}, p90 ${q(c, .9)}`,
       r.passes === undefined ? "" : `проходов ${r.passes}${price(r.cost)}`,
+      r.failed > 0 ? `!!! СБОЕВ ПРОХОДОВ ${r.failed}` : "",
+      r.span === undefined || covered(r) === r.span ? "" : `охвачено ${covered(r)} из ${r.span} с`,
     );
   }
   const all = part.flatMap((r) => r.secs);
