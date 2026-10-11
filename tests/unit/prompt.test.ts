@@ -31,6 +31,11 @@ import { FRAME_INTERVAL_SECONDS, MAX_FRAMES_PER_REQUEST, type Frame } from "../.
  * кадрами `007`. Стенд `002` меряет эту инструкцию, и проход, откатившийся без
  * кадров, обязан получить ровно её, а не вариант с чужими правилами. Не
  * совпало — значит правка прежней инструкции задела тех, у кого кадров нет.
+ *
+ * Хэши инструкции переснимались в `008` (крупные разделы): правила о размере
+ * раздела переписаны намеренно, хэш сообщения об участке остался прежним.
+ * Сторож продолжает охранять инструкцию от случайных правок — как и прежде,
+ * вместе с кадрами она не меняется.
  */
 const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
 
@@ -39,13 +44,13 @@ const STREAMER_INFO_SAMPLE = "5opka — Михаил. Постоянные со�
 describe("инструкция и сообщение участка без кадров — прежние", () => {
   test("инструкция без сведений о стримере", () => {
     expect(sha256(buildDocumentSystemPrompt())).toBe(
-      "a22be3d15d8bdcacf712290bf0c4d5c5d76d1e23eb7fc6c6b5565a5f2ad898be",
+      "da189dad5c42085836f1db17062c65b89fdb14527feafe7864e7dc8a395df3c4",
     );
   });
 
   test("инструкция со сведениями о стримере", () => {
     expect(sha256(buildDocumentSystemPrompt({ streamerInfo: STREAMER_INFO_SAMPLE }))).toBe(
-      "2d99dcc76dbc249b3c3031b274d76c2ff9c33da410c04fbc623140de056086b1",
+      "3e54da708347eac8724d1144991c6302d3e08fd3b7e5e1d5ed1d29b392e94cfb",
     );
   });
 
@@ -53,6 +58,63 @@ describe("инструкция и сообщение участка без ка�
     expect(sha256(buildPartMessage({ startSeconds: 1800, endSeconds: 2340 }))).toBe(
       "cd28174be8cd7341ff342ba502e2c185b5ba7aa37ddad6a29f213efae480b2ce",
     );
+  });
+});
+
+/**
+ * Размер раздела задаётся смыслом, а не числом (спецификация 008, FR-011): в
+ * инструкции нет ни минут, ни знаков, ни абзацев, ни числа разделов на эфир.
+ * Числа живут в проверке результата и в пределе выдачи вне инструкции
+ * (`normalizeSections`). Проверяются строки, где речь о разделе: в других
+ * местах числа законны (объём документа, время, примеры).
+ */
+describe("размер раздела в инструкции задан смыслом (008)", () => {
+  // `\b` в JS не знает кириллицу, поэтому границы слов — через `\p{L}`. Единицы размера — минуты, знаки,
+  // абзацы — с любым числительным; «разделов» — только с неопределённым количеством: «два несвязных
+  // эпизода — два раздела» говорит о границе, а не о размере.
+  const SIZE_NUMERAL = new RegExp(
+    "(?:^|[^\\p{L}])(?:" +
+      "(?:два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|пара|пару|несколько|нескольких)[\\s-]+(?:[\\p{L}-]+[\\s-]+){0,2}(?:минут|секунд|знак|символ|абзац|предложени)" +
+      "|(?:несколько|нескольких|пара|пару|десятки|десятка)[\\s-]+(?:[\\p{L}-]+[\\s-]+){0,2}раздел" +
+      "|(?:два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)[\\s-]+раздел\\p{L}*[\\s-]+(?:на|в|за)[\\s-]" +
+      ")",
+    "iu",
+  );
+
+  // Номер пункта списка («3. …») — не характеристика раздела.
+  const sectionLines = (text: string): string[] =>
+    text
+      .split("\n")
+      .filter((line) => /раздел/i.test(line) && !line.startsWith("{"))
+      .map((line) => line.replace(/^\s*\d+\.\s+/, ""));
+
+  test.each([
+    ["правила", PROMPT_RULES],
+    ["форма ответа", PROMPT_RESPONSE_FORMAT],
+    ["кадры", PROMPT_FRAMES],
+  ])("%s: в строках о разделе нет цифр и числительных при единицах размера", (_name, text) => {
+    const lines = sectionLines(text);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line, line).not.toMatch(/\d/);
+      expect(line, line).not.toMatch(SIZE_NUMERAL);
+    }
+  });
+
+  test("сам пример формы ответа не подсказывает размер раздела", () => {
+    expect(PROMPT_RESPONSE_FORMAT).not.toMatch(/в\s+(?:\d+|несколько)\s+абзац/i);
+  });
+
+  test("определение раздела одно и то же с кадрами и без них (FR-010)", () => {
+    const plain = buildDocumentSystemPrompt();
+    const withFrames = buildDocumentSystemPrompt({ withFrames: true });
+    for (const fragment of [
+      "**Раздел — это эпизод разговора:**",
+      "**Новый раздел начинается, когда разговор ушёл к другому предмету",
+    ]) {
+      expect(plain).toContain(fragment);
+      expect(withFrames).toContain(fragment);
+    }
   });
 });
 
@@ -453,7 +515,7 @@ describe("параметры запроса прохода", () => {
 
     expect(params.messages).toHaveLength(3);
     expect(sha256(params.messages[0]?.content as string)).toBe(
-      "2d99dcc76dbc249b3c3031b274d76c2ff9c33da410c04fbc623140de056086b1",
+      "3e54da708347eac8724d1144991c6302d3e08fd3b7e5e1d5ed1d29b392e94cfb",
     );
     expect(params.messages[2]?.role).toBe("user");
     expect(params.messages[2]?.content).toBe(buildPartMessage(PART));
