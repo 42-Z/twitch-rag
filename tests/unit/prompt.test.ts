@@ -44,13 +44,13 @@ const STREAMER_INFO_SAMPLE = "5opka — Михаил. Постоянные со�
 describe("инструкция и сообщение участка — сторож хэшей (переснято в 008)", () => {
   test("инструкция без сведений о стримере", () => {
     expect(sha256(buildDocumentSystemPrompt())).toBe(
-      "00e52d01258c8bac39653636ac0b0cc6d88f51ddd3bc4498a6fab1dcba699adb",
+      "6976c35e7d169e0cc8bd6ffa4969e212bc7b8587f6abba860b03dfa5e21d4d1a",
     );
   });
 
   test("инструкция со сведениями о стримере", () => {
     expect(sha256(buildDocumentSystemPrompt({ streamerInfo: STREAMER_INFO_SAMPLE }))).toBe(
-      "d20bbc715a385c2d19283979c59933bad1354a0d77335656e4cac88bcff0aabc",
+      "da941b8a874035bef9fe06ae79ba74aff225edddbf1db45cb9a4c05844dc22dd",
     );
   });
 
@@ -135,8 +135,8 @@ describe("размер раздела в инструкции задан смы�
     const plain = buildDocumentSystemPrompt();
     const withFrames = buildDocumentSystemPrompt({ withFrames: true });
     for (const fragment of [
-      "**Раздел — это эпизод разговора:",
-      "**Новый раздел начинается, когда разговор перешёл к другому предмету",
+      "**Раздел — это эпизод эфира:",
+      "**Новый раздел начинается, когда сменилось дело или большая тема",
     ]) {
       expect(plain).toContain(fragment);
       expect(withFrames).toContain(fragment);
@@ -544,7 +544,7 @@ describe("параметры запроса прохода", () => {
 
     expect(params.messages).toHaveLength(3);
     expect(sha256(params.messages[0]?.content as string)).toBe(
-      "d20bbc715a385c2d19283979c59933bad1354a0d77335656e4cac88bcff0aabc",
+      "da941b8a874035bef9fe06ae79ba74aff225edddbf1db45cb9a4c05844dc22dd",
     );
     expect(params.messages[2]?.role).toBe("user");
     expect(params.messages[2]?.content).toBe(buildPartMessage(PART));

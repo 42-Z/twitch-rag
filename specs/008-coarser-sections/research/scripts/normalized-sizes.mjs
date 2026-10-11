@@ -47,11 +47,20 @@ function describe(sections) {
   };
 }
 
-for (const group of GROUPS) {
+// Свои файлы: `normalized-sizes.mjs <файл>[@от-до] …` — по группе на аргумент; `@от-до` оставляет разделы,
+// начавшиеся в этих секундах (сравнение одного прохода с боевым документом).
+const cliGroups = process.argv.slice(2).map((arg) => {
+  const [file, range] = arg.split("@");
+  const [from, to] = range === undefined ? [0, Infinity] : range.split("-").map(Number);
+  return { name: arg, files: [file], from, to };
+});
+
+for (const group of cliGroups.length > 0 ? cliGroups : GROUPS) {
   const raw = [];
   const normalized = [];
   for (const file of group.files) {
-    const { sections } = JSON.parse(readFileSync(new URL(file, dataDir), "utf8"));
+    const { sections: all } = JSON.parse(readFileSync(new URL(file, dataDir), "utf8"));
+    const sections = all.filter((s) => s.startSeconds >= (group.from ?? 0) && s.startSeconds < (group.to ?? Infinity));
     const parsed = sections.map((s) => ({
       title: s.title,
       text: s.text,
