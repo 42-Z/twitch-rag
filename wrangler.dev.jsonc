@@ -1,0 +1,46 @@
+{
+  // Тестовая копия воркера: свой процесс разбора, без расписания, те же данные Upstash и тот же бакет аудио,
+  // что у сайта. Выпускается с компьютера: npx wrangler deploy -c wrangler.dev.jsonc. Боевой воркер и его
+  // `wrangler.jsonc` не затрагиваются; порядок работы — раздел «Проверка на тестовой копии воркера» в CLAUDE.md.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "twitch-rag-dev",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-15",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/mcp"]
+  },
+
+  // Бокс пишет куски аудио в этот бакет по фиксированным ключам, поэтому он общий с настоящим воркером.
+  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "twitch-audio" }],
+
+  // Имя процесса другое: иначе копия заняла бы имя настоящего.
+  "workflows": [
+    {
+      "name": "stream-ingest-dev",
+      "binding": "INGEST",
+      "class_name": "StreamIngestWorkflow"
+    }
+  ],
+
+  "ratelimits": [
+    {
+      "name": "PUBLIC_RATE_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
+
+  // Расписания нет: копия сама эфиры не подбирает, разбор идёт только по просьбе.
+  "triggers": { "crons": [] },
+
+  // Публичный адрес копии. Нужен расписанию, которого у копии нет; при ручном запуске разбора бокс возвращается
+  // по адресу, на который пришёл запрос (`originOf` в `src/worker/index.ts`).
+  "vars": { "WORKER_URL": "https://twitch-rag-dev.crbanana.workers.dev" },
+
+  "observability": { "enabled": true }
+}
