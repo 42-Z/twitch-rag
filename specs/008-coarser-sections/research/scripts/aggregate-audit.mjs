@@ -1,16 +1,21 @@
 // Сводка слепой проверки (T018): доли «верно / неверно / нет» по версиям, ошибки по типам и тяжести,
 // полезность, место в ранжировании, попарно по окнам. Соответствие букв версиям читается из `key/`.
 //
-//   node specs/008-coarser-sections/research/scripts/aggregate-audit.mjs [--old lbase] [--new lnew008]
+//   node specs/008-coarser-sections/research/scripts/aggregate-audit.mjs [--old lbase] [--new lnew008] [--packets <каталог>]
+//
+// `--packets` — тот же каталог, что у `build-audit-packets.mjs --packets`; без него — `data/audit/packets/`.
+// Ключ (`key/`) читается из `data/audit/key/`, поэтому перед новым прогоном каталог `data/audit` стоит сохранить.
 //
 // Пороги SC-006 для нового варианта: верных фактов не ниже 77,3 %, отсутствующих не выше 14 %,
 // тяжёлых ошибок не больше шести.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => { const i = args.indexOf(`--${name}`); return i === -1 ? fallback : args[i + 1]; };
 const OLD = flag("old", "lbase");
 const NEW = flag("new", "lnew008");
+const PACKETS = flag("packets");
 
 const here = (path) => new URL(path, import.meta.url);
 const { windows } = JSON.parse(readFileSync(here("../windows.json"), "utf8"));
@@ -22,7 +27,7 @@ const rows = [];
 const problems = [];
 
 for (const w of windows) {
-  const resultFile = here(`../data/audit/packets/${w.id}/result.json`);
+  const resultFile = PACKETS === undefined ? here(`../data/audit/packets/${w.id}/result.json`) : pathToFileURL(`${PACKETS.replace(/\/$/, "")}/${w.id}/result.json`);
   const keyFile = here(`../data/audit/key/${w.id}.json`);
   if (!existsSync(resultFile)) {
     problems.push(`${w.id}: нет result.json`);
