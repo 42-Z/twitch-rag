@@ -24,9 +24,16 @@ export interface SectionChunk {
 
 /** Текст раздела целиком дублируется в метаданных каждого куска и должен влезть в 48 КБ. */
 export const MAX_SECTION_CHARS = 6000;
-const MIN_CHUNK_CHARS = 1500;
-const MAX_CHUNK_CHARS = 3000;
-const CHUNK_OVERLAP_CHARS = 200;
+/**
+ * Длина куска индекса. Кусок — единица поиска: его вектор усредняет всё, что в нём сказано, поэтому в куске,
+ * где перемешано несколько тем, вопрос об одной из них теряется среди разделов других эфиров. Раздел-эпизод
+ * (`008`) длиннее прежнего, и при кусках 1500–3000 знаков он целиком уходил в индекс одним куском: поиск на
+ * живом эфире упал с 12 до 10 найденных из 20. На имитации тех же вопросов мельче куски возвращают поиск
+ * (`specs/008-coarser-sections/research/results.md`, «v4 и поиск»); выдаётся по-прежнему раздел целиком.
+ */
+export const MIN_CHUNK_CHARS = 350;
+export const MAX_CHUNK_CHARS = 700;
+const CHUNK_OVERLAP_CHARS = 100;
 /** Короче этого раздел не живёт сам по себе и склеивается с соседним. */
 const MIN_SECTION_CHARS = 400;
 
@@ -128,8 +135,9 @@ export function buildContextLine(input: {
 }
 
 /**
- * Раздел режется на куски 1500–3000 знаков с перекрытием 200.
- * Раздел короче нижней границы уходит в индекс целиком.
+ * Раздел режется на куски по границам предложений и абзацев, с перекрытием
+ * (длины — `MIN_CHUNK_CHARS`, `MAX_CHUNK_CHARS`, перекрытие 100 знаков).
+ * Раздел не длиннее верхней границы уходит в индекс целиком.
  */
 export function chunkSection(section: ParsedSection, contextLine: string): SectionChunk[] {
   const pieces = splitWithOverlap(section.text);

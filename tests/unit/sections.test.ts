@@ -3,7 +3,9 @@ import {
   normalizeSections,
   chunkSection,
   buildContextLine,
+  MAX_CHUNK_CHARS,
   MAX_SECTION_CHARS,
+  MIN_CHUNK_CHARS,
   type ParsedSection,
 } from "../../src/shared/sections.ts";
 
@@ -77,8 +79,38 @@ describe("нарезка раздела на куски", () => {
     expect(chunks.length).toBeGreaterThan(1);
     for (const chunk of chunks) {
       const body = chunk.text.slice(context.length + 2);
-      expect(body.length).toBeLessThanOrEqual(3000);
+      expect(body.length).toBeLessThanOrEqual(MAX_CHUNK_CHARS);
     }
+  });
+
+  test("раздел-эпизод в пару тысяч знаков не уходит в индекс одним куском (008)", () => {
+    // Кусок — единица поиска: вектор куска усредняет всё, что в нём сказано. Раздел в 2 500 знаков,
+    // уложенный в один кусок, терял вопросы об одной из своих тем среди разделов других эфиров.
+    const sentence = "Разговор шёл о сборке сервера и о том, что ломается. ";
+    const text = sentence.repeat(Math.ceil(2500 / sentence.length));
+    const chunks = chunkSection(sectionOf(text), context);
+
+    expect(text.length).toBeGreaterThan(2400);
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
+    for (const chunk of chunks) {
+      expect(chunk.text.slice(context.length + 2).length).toBeLessThanOrEqual(MAX_CHUNK_CHARS);
+    }
+  });
+
+  test("раздел не длиннее верхней границы куска остаётся одним куском", () => {
+    const text = "Короткая история про сервер. ".repeat(Math.floor(MAX_CHUNK_CHARS / 29));
+    expect(text.length).toBeLessThanOrEqual(MAX_CHUNK_CHARS);
+
+    expect(chunkSection(sectionOf(text), context)).toHaveLength(1);
+  });
+
+  test("куски всех частей покрывают текст раздела без потерь", () => {
+    const text = Array.from({ length: 40 }, (_, index) => `Предложение номер ${index} про содержание эфира.`).join(" ");
+    const chunks = chunkSection(sectionOf(text), context);
+    const joined = chunks.map((chunk) => chunk.text.slice(context.length + 2)).join(" ");
+
+    for (let index = 0; index < 40; index += 1) expect(joined).toContain(`номер ${index} `);
+    expect(MIN_CHUNK_CHARS).toBeLessThan(MAX_CHUNK_CHARS);
   });
 
   test("соседние куски перекрываются — фраза на стыке не теряется", () => {
