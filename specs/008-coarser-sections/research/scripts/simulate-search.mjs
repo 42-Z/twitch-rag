@@ -78,7 +78,8 @@ function chunkWith(text, { min, max, overlap }) {
 }
 
 const VARIANTS = {
-  current: null,
+  current: null, // боевая нарезка из `src/shared/sections.ts`: после правки 008 это 350/700/100
+  old3000: { min: 1500, max: 3000, overlap: 200 }, // нарезка до 008
   max1200: { min: 600, max: 1200, overlap: 150 },
   max1000: { min: 500, max: 1000, overlap: 150 },
   max800: { min: 400, max: 800, overlap: 120 },
