@@ -252,6 +252,7 @@ vitest.config.ts проверки: набор логики и ссылка на 
 vitest.workers.config.ts  набор Worker'а в его среде
 tests/           unit, contract, integration — логика; worker — Worker в его среде; e2e — браузер
 wrangler.jsonc   Worker: маршруты, хранилища, расписание, Workflows
+wrangler.dev.jsonc  тестовая копия Worker'а: свои имя и Workflow, без расписания, общие с сайтом данные
 specs/           спецификации, планы и задачи по SpecKit
 .specify/        скиллы и скрипты SpecKit
 ```
@@ -274,6 +275,76 @@ box files write /workspace/home/pipeline.mjs
 
 Сборка — одним файлом со всеми зависимостями внутри: в машине нет папки
 зависимостей, есть только Node.
+
+## Проверка на тестовой копии воркера
+
+Проверить разбор «как в бою», не выпуская код в боевой воркер, можно на отдельной
+копии: `wrangler.dev.jsonc` — воркер `twitch-rag-dev` со своим Workflow
+`stream-ingest-dev`, без расписания, с тем же бакетом аудио и теми же данными
+Upstash, что у сайта.
+
+**Почему не версии и не предпросмотры Cloudflare.** Адрес версии
+(`wrangler versions upload`) работает с боевыми ресурсами: «A Version URL runs one
+uploaded Worker version with the production resources configured for that version»
+([compare-workflows](https://developers.cloudflare.com/workers/previews/compare-workflows/)).
+Предпросмотр (`wrangler preview`) привязывается к уже существующему Workflow, а
+расписание и маршруты остаются боевыми: «For isolated testing, first deploy a
+dedicated non-production Workflow, then bind the Preview to it»
+([resources](https://developers.cloudflare.com/workers/previews/resources/)),
+«Routes and Cron Triggers target production»
+([previews](https://developers.cloudflare.com/workers/previews/)). Отдельно
+выложенный воркер — способ, который документация называет «Wrangler environments:
+Separately deployed Workers»; здесь он сделан отдельным файлом конфигурации, чтобы не
+трогать боевой `wrangler.jsonc`.
+
+**Выкладка** — один раз и после каждой правки кода:
+
+```
+npx wrangler deploy -c wrangler.dev.jsonc
+```
+
+Секреты выкладка не переносит: они ставятся отдельно, имена — из `Env` в
+`src/worker/env.ts`, значения — из `.env`. Список передаётся файлом JSON
+`{"имя": "значение"}` во временной папке вне проекта, который удаляется сразу после
+команды; значения не пишутся ни в аргументы, ни в ответ:
+
+```
+npx wrangler secret bulk <файл.json> -c wrangler.dev.jsonc
+```
+
+(Сверено с `npx wrangler secret bulk --help`: файл — JSON или `.env`, `-c` — путь к
+конфигурации.)
+
+**Запуск разбора и ход.**
+
+- `POST <адрес копии>/api/streams/<id>/reparse` с `Authorization: Bearer
+  <APP_ADMIN_TOKEN из .env>`; токен не печатать. Бокс по окончании скачивания
+  возвращается по адресу, с которого пришёл запрос (`originOf` в
+  `src/worker/index.ts`), поэтому запускать надо через адрес копии, а не боевого.
+- Ход — по записи реестра `stream:<id>` (поле `status`: `processing`, затем `ready`
+  или `failed`), раз в минуту. Полный разбор эфира в 2 ч 20 мин занял 27–29 минут.
+- Одновременно один разбор: второй разбор той же записи сервис отвергает (`busy`,
+  `src/worker/routes/streams.ts`), потому что два конвейера пишут в одну папку бокса.
+
+**Что перезаписывается.** Данные общие с сайтом: разбор заменяет документ, знания и
+запись реестра этого эфира. Перед запуском прежний документ (Blob
+`streams/<id>.md`) сохраняется в постоянное место — не в `/tmp` и не в каталог
+сессии: они очищаются за время простоя. Неудавшийся разбор прежние документ и знания
+не трогает. Копия сама эфиры не подбирает: расписания у неё нет.
+
+**Деньги.** Полный разбор эфира в 2 ч 20 мин стоит около $0,15. Расход — по
+`GET https://openrouter.ai/api/v1/credits` (`total_usage`) до и после, цифра
+записывается в замеры. Платный запуск — по согласию владельца на цену.
+
+**Что смотреть после разбора.** Скрипты лежат в ветке `008-coarser-sections`
+(PR #95) и попадут в `main` вместе с ней: `specs/008-coarser-sections/research/scripts/`
+— `section-sizes.mjs` (размеры разделов), `search-check.mjs` (поиск по вопросам с
+известными минутами эфира), а `measure-frames.ts --check` из
+`specs/007-stream-frames/research/scripts/` считает контрольные факты.
+
+**Уборка.** Копия остаётся включённой, пока нужна. `npx wrangler delete -c
+wrangler.dev.jsonc` (есть `--dry-run`) удаляет воркер; удаляется ли при этом
+Workflow `stream-ingest-dev`, не проверено.
 
 ## Контроль версий
 
