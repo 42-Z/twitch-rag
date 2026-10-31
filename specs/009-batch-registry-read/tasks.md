@@ -78,7 +78,7 @@ description: "Задачи: чтение реестра одной операц�
 
 - [x] T011 Прогнать `npx vitest run --project logic`, `npx vitest run --project workers`, `npm run typecheck`, `npm run build`
 - [x] T012 Пройти [quickstart.md](./quickstart.md) без приёмочной части: проверки, типы, сборка
-- [ ] T013 Ревью по навыку `code-review`, затем коммит и Pull Request в `main` (`gh-cli`)
+- [x] T013 Ревью по навыку `code-review`, затем коммит и Pull Request в `main` (`gh-cli`). Навык дважды отказал по недоступности модели на стороне платформы; правки просмотрены вручную по документации SDK и по исходникам пакета. PR #99
 
 ---
 
