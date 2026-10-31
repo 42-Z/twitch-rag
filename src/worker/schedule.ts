@@ -161,12 +161,11 @@ export async function runScheduledCheck(services: Services, callbackBaseUrl: str
 
   try {
     const nowUnix = Math.floor(Date.now() / 1000);
-    const knownIds = await services.registry.knownStreamIds();
+    // Реестр читается одной выборкой: по обращению на запись проверка упиралась
+    // в предел внешних обращений Cloudflare и не успевала запустить разбор
+    // (specs/009-batch-registry-read/research.md §1).
     const known = new Map<string, StreamRecord>();
-    for (const id of knownIds) {
-      const record = await services.registry.getStream(id);
-      if (record !== undefined) known.set(id, record);
-    }
+    for (const record of await services.registry.listStreams()) known.set(record.streamId, record);
 
     await retireExhausted(known, services);
     const knownVideos = knownVideoIds(known);

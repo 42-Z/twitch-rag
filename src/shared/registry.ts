@@ -116,6 +116,9 @@ const CHANNEL_KEY = "channel";
 const INDEX_KEY = "streams:index";
 const TOKEN_KEY = "twitch:token";
 
+/** Сколько записей читается одним пакетом команд, то есть одним запросом. */
+const READ_BATCH = 100;
+
 const streamKey = (streamId: string) => `stream:${streamId}`;
 
 export interface RegistryConfig {
@@ -280,32 +283,48 @@ export class Registry {
   }
 
   /**
-   * Идентификаторы всех известных записей — основа проверки «эту уже брали».
+   * Все записи списка — от новых к старым, одним списком и пачками по сто.
    *
-   * Приведение к строке здесь не для красоты. Ответ разбирается как JSON, и
-   * участник множества, состоящий из цифр, возвращается числом — проверено на
-   * самом SDK с подменённой сетью: на запрос обхода вернулось `2345678901`
-   * числом. Идентификаторы площадки приходят строками, поэтому без приведения
-   * проверка «эту запись уже брали» не срабатывала бы никогда, и обход архива
-   * каждый раз шёл бы до конца вместо остановки на первой известной записи.
+   * Почему пачками. Каждое обращение к хранилищу — отдельный HTTP-запрос, а на
+   * бесплатном тарифе Cloudflare на вызов Worker отведено 50 внешних обращений
+   * (https://developers.cloudflare.com/workers/platform/limits/#subrequests).
+   * Чтение по одной записи стоило обращения на запись: на 39 записях это 39–40
+   * из 50, и часовая проверка падала, не успев запустить разбор
+   * (specs/009-batch-registry-read/research.md §1). Пакет команд уходит одним
+   * запросом `POST /pipeline` (https://upstash.com/docs/redis/features/restapi),
+   * и обращений становится `1 + ⌈N / READ_BATCH⌉`.
+   *
+   * Почему сто. Ограничено не число команд, а размер запроса — 10 МБ
+   * (https://upstash.com/docs/redis/troubleshooting/max_request_size_exceeded);
+   * сто записей оставляют до него десятикратный запас даже на тысяче.
+   *
+   * Идентификатор приводится к строке: ответ разбирается как JSON, и участник
+   * множества из одних цифр возвращается числом — тогда и в `streamId` попало бы
+   * число. Запись, исчезнувшая между списком и чтением, приходит `null` и
+   * пропускается.
    */
-  async knownStreamIds(): Promise<string[]> {
-    const ids = await this.call(() => this.redis.zrange<unknown[]>(INDEX_KEY, 0, -1));
-    return ids.map((id) => String(id));
-  }
-
   async listStreams(options: { limit?: number; fromUnix?: number; toUnix?: number } = {}): Promise<StreamRecord[]> {
     const min = options.fromUnix ?? 0;
     const max = options.toUnix ?? Number.MAX_SAFE_INTEGER;
     const ids = await this.call(() =>
-      this.redis.zrange<string[]>(INDEX_KEY, max, min, { byScore: true, rev: true }),
+      this.redis.zrange<unknown[]>(INDEX_KEY, max, min, { byScore: true, rev: true }),
     );
-    const selected = options.limit === undefined ? ids : ids.slice(0, options.limit);
+    const ordered = ids.map((id) => String(id));
+    const selected = options.limit === undefined ? ordered : ordered.slice(0, options.limit);
 
     const records: StreamRecord[] = [];
-    for (const id of selected) {
-      const record = await this.getStream(id);
-      if (record !== undefined) records.push(record);
+    for (let start = 0; start < selected.length; start += READ_BATCH) {
+      const batch = selected.slice(start, start + READ_BATCH);
+      const hashes = await this.call(async () => {
+        const pipeline = this.redis.pipeline();
+        for (const id of batch) pipeline.hgetall<Record<string, unknown>>(streamKey(id));
+        return pipeline.exec<Array<Record<string, unknown> | null>>();
+      });
+      batch.forEach((id, index) => {
+        const raw = hashes[index];
+        if (raw === null || raw === undefined || Object.keys(raw).length === 0) return;
+        records.push(toStreamRecord(raw, id));
+      });
     }
     return records;
   }

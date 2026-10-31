@@ -42,6 +42,7 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.1.13",
     "@cloudflare/workers-types": "^5.20260915.1",
+    "@modelcontextprotocol/client": "^2.0.0",
     "@msw/cloudflare": "^0.0.1",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.3.3",

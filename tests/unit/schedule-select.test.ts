@@ -300,7 +300,7 @@ describe("сбой опроса", () => {
           watchFrom: 0,
           addedAt: 0,
         }),
-        knownStreamIds: async () => [],
+        listStreams: async () => [],
         getStream: async () => undefined,
         recordCheck: async (mark: Record<string, unknown>) => {
           checks.push(mark);
