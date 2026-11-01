@@ -5,10 +5,10 @@ import { Registry } from "../../src/shared/registry.ts";
  * Разбор ответа реестра — на подменённой сети, без живого сервиса.
  *
  * Проверять это стоит именно так: дело не в сервисе, а в разборе ответа.
- * SDK разбирает значения как JSON, поэтому участник множества, состоящий из
- * одних цифр, возвращается числом. Объявленный тип `string[]` этого не
- * выражает, и молчание компилятора здесь ничего не значит: `zrange<string[]>`
- * — приведение типа, а не преобразование.
+ * SDK разбирает значения как JSON, поэтому число, записанное строкой,
+ * возвращается числом. Объявленный тип этого не выражает, и молчание
+ * компилятора здесь ничего не значит: `zrange<string[]>` — приведение типа,
+ * а не преобразование.
  */
 const realFetch = globalThis.fetch;
 
@@ -32,32 +32,6 @@ function stubRedis(result: unknown): void {
 function registry(): Registry {
   return new Registry({ url: "https://example.upstash.io", token: "token" });
 }
-
-describe("идентификаторы известных записей", () => {
-  test("цифровой идентификатор возвращается строкой, а не числом", () => {
-    // Иначе проверка «эту запись уже брали» не срабатывает: идентификаторы
-    // площадки приходят строками, и обход архива каждый раз шёл бы до конца
-    // вместо остановки на первой известной записи.
-    stubRedis([btoa("2345678901")]);
-
-    return registry()
-      .knownStreamIds()
-      .then((ids) => {
-        expect(typeof ids[0]).toBe("string");
-        expect(ids).toEqual(["2345678901"]);
-      });
-  });
-
-  test("нецифровые идентификаторы остаются собой", () => {
-    stubRedis([btoa("abc"), btoa("2345678901"), btoa("")]);
-
-    return registry()
-      .knownStreamIds()
-      .then((ids) => {
-        expect(ids).toEqual(["abc", "2345678901", ""]);
-      });
-  });
-});
 
 describe("запись части эфира", () => {
   const hash = (pairs: Record<string, string>) => Object.entries(pairs).flatMap(([key, value]) => [btoa(key), btoa(value)]);

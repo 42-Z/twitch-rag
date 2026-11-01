@@ -28,17 +28,30 @@ type Value = string | Map<string, string> | Map<string, number>;
 export class FakeRegistry {
   readonly data = new Map<string, Value>();
 
+  /**
+   * Сколько HTTP-запросов сделал код под проверкой. Считается именно запрос,
+   * а не команда: пакет команд уходит одним запросом, и разница между «сто
+   * команд в ста запросах» и «сто команд в одном» в счётчике команд не видна.
+   */
+  requests = 0;
+  /** Сколько команд пришло в каждом пакете: по нему видно, что пачка не распалась. */
+  readonly pipelines: number[] = [];
+
   handlers() {
     return [
       http.post(`${REGISTRY_URL}/multi-exec`, async ({ request }) => {
+        this.requests += 1;
         const commands = (await request.json()) as string[][];
         return HttpResponse.json(commands.map((command) => ({ result: encode(this.run(command)) })));
       }),
       http.post(`${REGISTRY_URL}/pipeline`, async ({ request }) => {
+        this.requests += 1;
         const commands = (await request.json()) as string[][];
+        this.pipelines.push(commands.length);
         return HttpResponse.json(commands.map((command) => ({ result: encode(this.run(command)) })));
       }),
       http.post(REGISTRY_URL, async ({ request }) => {
+        this.requests += 1;
         const command = (await request.json()) as string[];
         return HttpResponse.json({ result: encode(this.run(command)) });
       }),
@@ -80,6 +93,26 @@ export class FakeRegistry {
         for (let i = 0; i < pairs.length; i += 2) set.set(String(pairs[i + 1]), Number(pairs[i]));
         this.data.set(key, set);
         return pairs.length / 2;
+      }
+      case "eval":
+        // Занятие записи под разбор. Скрипт здесь не разыгрывается: на путях,
+        // где он нужен, запись свободна, и настоящий скрипт ответил бы «занято».
+        return 1;
+      case "zrange": {
+        const [key = "", min = "0", max = "-1", ...flags] = args;
+        const set = this.data.get(key);
+        const members = set instanceof Map ? [...(set as Map<string, number>)] : [];
+        // При равных весах Redis сравнивает участников лексикографически.
+        const sorted = members.sort(([a, wa], [b, wb]) => wa - wb || a.localeCompare(b));
+        const rev = flags.includes("rev");
+        const ordered = rev ? [...sorted].reverse() : sorted;
+        // С BYSCORE REV границы идут от большей к меньшей — так их и передаёт SDK.
+        const low = rev ? Number(max) : Number(min);
+        const high = rev ? Number(min) : Number(max);
+        const selected = flags.includes("byscore")
+          ? ordered.filter(([, weight]) => low <= weight && weight <= high)
+          : ordered.slice(Number(min), Number(max) === -1 ? undefined : Number(max) + 1);
+        return selected.map(([member]) => member);
       }
       default:
         throw new Error(`Подставной реестр не знает команды ${name}`);

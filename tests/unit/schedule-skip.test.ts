@@ -102,7 +102,7 @@ function servicesWith(videos: TwitchVideo[], options: { liveStreamId?: string } 
         watchFrom: WATCH_FROM,
         addedAt: WATCH_FROM,
       }),
-      knownStreamIds: async () => [],
+      listStreams: async () => [],
       getStream: async () => undefined,
       patchStream: async () => undefined,
       putStream: async (record: StreamRecord) => {
