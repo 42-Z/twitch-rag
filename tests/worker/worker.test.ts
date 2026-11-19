@@ -5,7 +5,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, test } from "vitest";
 import worker from "../../src/worker/index.ts";
 import { createMcpServer } from "../../src/worker/mcp.ts";
-import { FakeRegistry, network, twitchVideo, TWITCH_HELIX_URL } from "./network.ts";
+import { FakeRegistry, network, REGISTRY_URL, twitchVideo, TWITCH_HELIX_URL } from "./network.ts";
 
 /**
  * Worker в своей среде исполнения: запрос идёт в сам Worker, привязки —
@@ -239,5 +239,102 @@ describe("перечень для ассистента при выросшем �
     // Список записей и одна пачка на все пятьдесят: обращение к реестру не
     // растёт вместе с числом строк ответа.
     expect(registry.requests).toBe(2);
+  });
+});
+
+describe("ресурс с общей информацией о стримере", () => {
+  /** Клиент подключается к самому серверу, без сети: проверяется путь ресурса. */
+  async function withMcp(run: (client: Client) => Promise<void>): Promise<void> {
+    const server = createMcpServer(env);
+    const [toServer, toClient] = InMemoryTransport.createLinkedPair();
+    await server.connect(toServer);
+    const client = new Client({ name: "проверка", version: "0" });
+    await client.connect(toClient);
+    try {
+      await run(client);
+    } finally {
+      await client.close();
+    }
+  }
+
+  test("заполненное поле — один ресурс, чтение отдаёт текст без краевых пробелов", async () => {
+    const registry = seededRegistry(0);
+    registry.hash("channel").set("agentStreamerInfo", " 5opka — стример. \n");
+    network.use(...registry.handlers());
+
+    await withMcp(async (client) => {
+      const list = await client.listResources();
+      expect(list.resources).toHaveLength(1);
+      expect(list.resources[0]).toMatchObject({
+        uri: "streamer://info",
+        name: "streamer_info",
+        title: "Общая информация о стримере",
+        mimeType: "text/plain",
+      });
+
+      const read = await client.readResource({ uri: "streamer://info" });
+      expect(read.contents[0]).toMatchObject({
+        uri: "streamer://info",
+        mimeType: "text/plain",
+        text: "5opka — стример.",
+      });
+    });
+
+    // Один запрос к реестру на перечень и один на чтение.
+    expect(registry.requests).toBe(2);
+  });
+
+  test("пустое поле — ресурса нет, чтение отвечает отказом", async () => {
+    const registry = seededRegistry(0);
+    network.use(...registry.handlers());
+
+    await withMcp(async (client) => {
+      const list = await client.listResources();
+      expect(list.resources).toEqual([]);
+      await expect(client.readResource({ uri: "streamer://info" })).rejects.toThrow();
+    });
+  });
+
+  test("поле для разбора не подставляется вместо пустого поля для ассистента", async () => {
+    const registry = seededRegistry(0);
+    registry.hash("channel").set("streamerInfo", "сведения для разбора");
+    network.use(...registry.handlers());
+
+    await withMcp(async (client) => {
+      const list = await client.listResources();
+      expect(list.resources).toEqual([]);
+      await expect(client.readResource({ uri: "streamer://info" })).rejects.toThrow();
+    });
+  });
+
+  test("правка поля видна следующему чтению", async () => {
+    const registry = seededRegistry(0);
+    registry.hash("channel").set("agentStreamerInfo", "первый текст");
+    network.use(...registry.handlers());
+
+    await withMcp(async (client) => {
+      const first = await client.readResource({ uri: "streamer://info" });
+      expect(first.contents[0]).toMatchObject({ text: "первый текст" });
+
+      registry.hash("channel").set("agentStreamerInfo", "второй текст");
+
+      const second = await client.readResource({ uri: "streamer://info" });
+      expect(second.contents[0]).toMatchObject({ text: "второй текст" });
+    });
+  });
+
+  test("отказ реестра — ошибка, а не пустой перечень", async () => {
+    // Клиент склеивает команды в пачку, поэтому отказывают все три пути.
+    const fail = () => HttpResponse.json({ error: "сбой" }, { status: 500 });
+    network.use(
+      http.post(REGISTRY_URL, fail),
+      http.post(`${REGISTRY_URL}/pipeline`, fail),
+      http.post(`${REGISTRY_URL}/multi-exec`, fail),
+    );
+
+    await withMcp(async (client) => {
+      await expect(client.listResources()).rejects.toThrow();
+      await expect(client.readResource({ uri: "streamer://info" })).rejects.toThrow();
+    });
   });
 });

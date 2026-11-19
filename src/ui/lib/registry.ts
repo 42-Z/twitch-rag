@@ -54,13 +54,23 @@ export interface ChannelSummary {
   lastCheckError?: string;
   /** Сведения о стримере: заполняет владелец, уходят в системную инструкцию. */
   streamerInfo?: string;
+  /** Общая информация для ассистента: её получает ресурс MCP. */
+  agentStreamerInfo?: string;
 }
+
+/**
+ * Публичный текст отказа. Подробность — ответ хранилища, код, адрес — уходит
+ * в журнал: страницу читает кто угодно, и техническое сообщение внешнего
+ * сервиса наружу не показывается (FR-028 работы 001).
+ */
+const REGISTRY_UNAVAILABLE = "Реестр сейчас недоступен. Попробуйте обновить страницу.";
 
 class RegistryUnavailableError extends Error {}
 
 async function redisCall<T>(command: readonly unknown[]): Promise<T> {
   if (REGISTRY_URL === "" || READONLY_TOKEN === "") {
-    throw new RegistryUnavailableError("Адрес реестра не настроен в сборке интерфейса.");
+    console.error("[реестр] адрес или токен чтения не заданы в сборке интерфейса");
+    throw new RegistryUnavailableError(REGISTRY_UNAVAILABLE);
   }
   const response = await fetch(REGISTRY_URL, {
     method: "POST",
@@ -68,10 +78,14 @@ async function redisCall<T>(command: readonly unknown[]): Promise<T> {
     body: JSON.stringify(command),
   });
   if (!response.ok) {
-    throw new RegistryUnavailableError(`Реестр ответил ${response.status}.`);
+    console.error(`[реестр] ответ ${response.status}`);
+    throw new RegistryUnavailableError(REGISTRY_UNAVAILABLE);
   }
   const body = (await response.json()) as { result: T; error?: string };
-  if (body.error !== undefined) throw new RegistryUnavailableError(body.error);
+  if (body.error !== undefined) {
+    console.error(`[реестр] ${body.error}`);
+    throw new RegistryUnavailableError(REGISTRY_UNAVAILABLE);
+  }
   return body.result;
 }
 
@@ -79,7 +93,8 @@ async function redisCall<T>(command: readonly unknown[]): Promise<T> {
 async function redisPipeline<T>(commands: readonly (readonly unknown[])[]): Promise<T[]> {
   if (commands.length === 0) return [];
   if (REGISTRY_URL === "" || READONLY_TOKEN === "") {
-    throw new RegistryUnavailableError("Адрес реестра не настроен в сборке интерфейса.");
+    console.error("[реестр] адрес или токен чтения не заданы в сборке интерфейса");
+    throw new RegistryUnavailableError(REGISTRY_UNAVAILABLE);
   }
   const response = await fetch(`${REGISTRY_URL}/pipeline`, {
     method: "POST",
@@ -87,14 +102,18 @@ async function redisPipeline<T>(commands: readonly (readonly unknown[])[]): Prom
     body: JSON.stringify(commands),
   });
   if (!response.ok) {
-    throw new RegistryUnavailableError(`Реестр ответил ${response.status}.`);
+    console.error(`[реестр] ответ ${response.status}`);
+    throw new RegistryUnavailableError(REGISTRY_UNAVAILABLE);
   }
   const body = (await response.json()) as Array<{ result: T; error?: string }>;
   // Ошибка приходит на каждую команду отдельно, а не на весь запрос: без этой
   // проверки сбойная команда давала бы на своём месте пустоту, и запись молча
   // пропадала бы из списка — вместо отказа, который видно.
   const failed = body.find((entry) => entry.error !== undefined);
-  if (failed !== undefined) throw new RegistryUnavailableError(failed.error ?? "");
+  if (failed !== undefined) {
+    console.error(`[реестр] ${failed.error ?? ""}`);
+    throw new RegistryUnavailableError(REGISTRY_UNAVAILABLE);
+  }
   return body.map((entry) => entry.result);
 }
 
@@ -203,5 +222,6 @@ export async function getChannel(): Promise<ChannelSummary | undefined> {
       ? {}
       : { lastCheckError: map.get("lastCheckError") }),
     ...(map.get("streamerInfo") === undefined ? {} : { streamerInfo: map.get("streamerInfo") }),
+    ...(map.get("agentStreamerInfo") === undefined ? {} : { agentStreamerInfo: map.get("agentStreamerInfo") }),
   };
 }

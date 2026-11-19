@@ -71,3 +71,26 @@ export async function handleSetStreamer(request: Request, env: Env, services: Se
   await services.registry.setStreamerInfo(parsed.data.info);
   return Response.json({ saved: true });
 }
+
+// --- PUT /api/agent-streamer: общая информация для ассистента (ресурс MCP) ---
+
+/**
+ * Общая информация о стримере для ассистента, подключённого по MCP.
+ * Отдельная от сведений для разбора: правка одного поля не меняет другое,
+ * и в ресурс уходит только этот текст.
+ */
+export async function handleSetAgentStreamer(request: Request, env: Env, services: Services): Promise<Response> {
+  requireAdminToken(request, env);
+
+  const body = await parseJson(request);
+  const parsed = streamerSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new AppError(
+      "invalid_input",
+      `Укажите { info } — общую информацию о стримере для ассистента, не длиннее ${MAX_STREAMER_INFO_CHARS} знаков.`,
+    );
+  }
+
+  await services.registry.setAgentStreamerInfo(parsed.data.info);
+  return Response.json({ saved: true });
+}

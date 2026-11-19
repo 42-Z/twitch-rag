@@ -79,12 +79,30 @@ export function App(): React.JSX.Element {
   const [adminToken, setAdminToken] = useState("");
   const { health, tokenState } = useHealth(adminToken);
   const [channel, setChannel] = useState<ChannelSummary | undefined>(undefined);
+  /** Отличает «канал ещё не прочитан» и «канала нет» от ошибки чтения. */
+  const [channelLoaded, setChannelLoaded] = useState(false);
+  const [channelError, setChannelError] = useState<string | undefined>(undefined);
   const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
+    setChannelLoaded(false);
+    setChannelError(undefined);
     getChannel()
-      .then(setChannel)
-      .catch(() => setChannel(undefined));
+      .then((value) => {
+        if (cancelled) return;
+        setChannel(value);
+        setChannelLoaded(true);
+      })
+      .catch((cause: unknown) => {
+        if (cancelled) return;
+        setChannel(undefined);
+        setChannelError(cause instanceof Error ? cause.message : String(cause));
+        setChannelLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [refreshToken]);
 
   const canManage = tokenState === "valid";
@@ -96,7 +114,7 @@ export function App(): React.JSX.Element {
    */
   const pages: Record<RouteId, React.ReactNode> = {
     home: <HomePage />,
-    mcp: <McpPage />,
+    mcp: <McpPage channel={channel} loaded={channelLoaded} error={channelError} />,
     api: <ApiPage />,
     knowledge: (
       <KnowledgePage

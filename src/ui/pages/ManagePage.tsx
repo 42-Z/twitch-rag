@@ -22,6 +22,12 @@ import type { ChannelSummary } from "../lib/registry.ts";
 const STREAMER_INFO_EXAMPLE =
   "5opka — Кирилл Баранов, стримит истории из жизни и разборки с чатом, играет в Minecraft. Постоянные собеседники: Соня (sonasheka), Мафаня (mafanyaking), Buster, MellSher. Главный мем канала — «42, братуха».";
 
+/** Пример для поля ассистента: общее описание, а не список исправлений. */
+const AGENT_INFO_EXAMPLE =
+  "5opka (пятёрка) — Кирилл Баранов, стример из Ростова-на-Дону. Канал про общение: истории из жизни, разборки с чатом, просмотр фильмов и видео, Minecraft, музыка. Постоянные собеседники: Соня, Мафаня, Buster, MellSher.";
+
+type ManageAction = "channel" | "stream" | "streamer" | "agent";
+
 interface ManagePageProps {
   adminToken: string;
   onTokenChange: (token: string) => void;
@@ -40,10 +46,18 @@ export function ManagePage({
   const [channelLogin, setChannelLogin] = useState("");
   const [streamUrl, setStreamUrl] = useState("");
   const [streamerInfo, setStreamerInfo] = useState("");
-  const [busy, setBusy] = useState<"channel" | "stream" | "streamer" | undefined>(undefined);
+  const [agentInfo, setAgentInfo] = useState("");
+  /**
+   * Пока владелец не сохранил набранное, перечитывание канала не затирает
+   * поле: обновление соседнего действия или сбой чтения не должны отнимать
+   * несохранённый текст.
+   */
+  const [streamerDirty, setStreamerDirty] = useState(false);
+  const [agentDirty, setAgentDirty] = useState(false);
+  const [busy, setBusy] = useState<ManageAction | undefined>(undefined);
   /** Итог действия помнит, какая форма его вызвала: подпись показывается там же, где нажимали. */
   const [message, setMessage] = useState<
-    { what: "channel" | "stream" | "streamer"; kind: "success" | "note" | "error"; text: string } | undefined
+    { what: ManageAction; kind: "success" | "note" | "error"; text: string } | undefined
   >(undefined);
 
   const allowed = tokenState === "valid";
@@ -53,8 +67,16 @@ export function ManagePage({
   // памяти формы.
   const savedStreamerInfo = channel?.streamerInfo ?? "";
   useEffect(() => {
+    if (streamerDirty) return;
     setStreamerInfo(savedStreamerInfo);
-  }, [savedStreamerInfo]);
+  }, [savedStreamerInfo, streamerDirty]);
+
+  // Второе поле живёт в той же записи канала, но меняется своим действием.
+  const savedAgentInfo = channel?.agentStreamerInfo ?? "";
+  useEffect(() => {
+    if (agentDirty) return;
+    setAgentInfo(savedAgentInfo);
+  }, [savedAgentInfo, agentDirty]);
 
   /**
    * Подпись об исходе: у действия он свой.
@@ -64,7 +86,7 @@ export function ManagePage({
    * разбирать нечего. Зелёный цвет утверждал бы, что запись принята.
    */
   async function submit(
-    what: "channel" | "stream" | "streamer",
+    what: ManageAction,
     action: () => Promise<{ kind: "success" | "note"; text: string }>,
     reset: () => void,
   ): Promise<void> {
@@ -83,7 +105,7 @@ export function ManagePage({
   }
 
   /** Подпись об исходе действия — рядом с кнопкой, а не в шапке страницы. */
-  function outcome(what: "channel" | "stream" | "streamer"): React.JSX.Element | null {
+  function outcome(what: ManageAction): React.JSX.Element | null {
     if (message === undefined || message.what !== what) return null;
     const color =
       message.kind === "error"
@@ -172,7 +194,7 @@ export function ManagePage({
               перезагрузке. Отслеживаемый канал выше объясняет своё состояние. */}
           {channel !== undefined && (
             <section className="space-y-3">
-              <h2 className="text-lg font-semibold">О стримере</h2>
+              <h2 className="text-lg font-semibold">Сведения о стримере для разбора</h2>
               <p className="text-sm text-muted-foreground">
                 Эти сведения уходят в инструкцию, по которой составляется документ. Из них разбор узнаёт,
                 как на самом деле зовут участников и что означают словечки канала, — без них имена
@@ -181,6 +203,9 @@ export function ManagePage({
               <p className="text-sm text-muted-foreground">
                 Пишите коротко: кто это, о чём канал, кто постоянные собеседники, какие на канале свои
                 словечки. Пустое поле — сведений нет, разбор идёт как обычно.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Ассистент, подключённый по MCP, эти сведения не получает: для него есть отдельное поле ниже.
               </p>
               <form
                 className="space-y-2"
@@ -192,15 +217,18 @@ export function ManagePage({
                       await callOwnerApi("/api/streamer", "PUT", adminToken, { info: streamerInfo });
                       return { kind: "success", text: "Сведения сохранены." };
                     },
-                    () => undefined,
+                    () => setStreamerDirty(false),
                   );
                 }}
               >
-                <Label htmlFor="streamer-info">Сведения о стримере</Label>
+                <Label htmlFor="streamer-info">Сведения о стримере для разбора</Label>
                 <Textarea
                   id="streamer-info"
                   value={streamerInfo}
-                  onChange={(event) => setStreamerInfo(event.target.value)}
+                  onChange={(event) => {
+                    setStreamerInfo(event.target.value);
+                    setStreamerDirty(true);
+                  }}
                   placeholder={STREAMER_INFO_EXAMPLE}
                   rows={4}
                 />
@@ -219,6 +247,57 @@ export function ManagePage({
                 </div>
               </form>
               {outcome("streamer")}
+            </section>
+          )}
+
+          {/* Второе поле — для ассистента. Оно публично и на разбор не влияет;
+              это сказано прямо, иначе владелец перенесёт сюда сведения для
+              разбора или напишет то, чего нельзя показывать. */}
+          {channel !== undefined && (
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">Общая информация о стримере для ассистента</h2>
+              <p className="text-sm text-muted-foreground">
+                Эти сведения ассистент, подключённый по MCP, получает как ресурс. Их видят все, кто подключается
+                к серверу, поэтому не пишите того, что нельзя показывать. На разбор документов они не влияют.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Пишите коротко: кто это, о чём канал, кто постоянные собеседники. Пустое поле — ресурса нет.
+              </p>
+              <form
+                className="space-y-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submit(
+                    "agent",
+                    async () => {
+                      await callOwnerApi("/api/agent-streamer", "PUT", adminToken, { info: agentInfo });
+                      return { kind: "success", text: "Сведения для ассистента сохранены." };
+                    },
+                    () => setAgentDirty(false),
+                  );
+                }}
+              >
+                <Label htmlFor="agent-streamer-info">Общая информация о стримере</Label>
+                <Textarea
+                  id="agent-streamer-info"
+                  value={agentInfo}
+                  onChange={(event) => {
+                    setAgentInfo(event.target.value);
+                    setAgentDirty(true);
+                  }}
+                  placeholder={AGENT_INFO_EXAMPLE}
+                  rows={4}
+                />
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-sm text-muted-foreground">
+                    Действует сразу: следующее чтение ресурса отдаст новый текст.
+                  </p>
+                  <Button type="submit" disabled={busy === "agent" || agentInfo === savedAgentInfo}>
+                    {busy === "agent" ? "Сохраняю…" : "Сохранить"}
+                  </Button>
+                </div>
+              </form>
+              {outcome("agent")}
             </section>
           )}
 

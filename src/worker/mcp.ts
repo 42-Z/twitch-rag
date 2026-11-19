@@ -11,7 +11,7 @@
  */
 
 import { createMcpHandler } from "agents/mcp/server";
-import { McpServer } from "@modelcontextprotocol/server";
+import { McpServer, ResourceNotFoundError } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { DATE_PATTERN } from "./routes/knowledge.ts";
 import type { Env } from "./env.ts";
@@ -29,9 +29,62 @@ import {
 const SERVER_NAME = "twitch-knowledge";
 const SERVER_VERSION = "0.1.0";
 
+/** Ресурс с общей информацией о стримере: постоянный адрес и метаданные. */
+const STREAMER_RESOURCE_URI = "streamer://info";
+const STREAMER_RESOURCE_NAME = "streamer_info";
+const STREAMER_RESOURCE_TITLE = "Общая информация о стримере";
+const STREAMER_RESOURCE_DESCRIPTION = "Кто такой стример и о чём канал: общие сведения для ассистента";
+
 export function createMcpServer(env: Env): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const server = new McpServer(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    // Уведомлений об изменениях нет: сервер без состояния, клиент видит
+    // правку при следующем обращении. Иначе клиент ждал бы того, чего не будет.
+    { capabilities: { resources: { listChanged: false } } },
+  );
   const services = createServices(env);
+
+  /** Текст поля для ассистента; пустая строка — «не задано». */
+  async function agentInfo(): Promise<string> {
+    const channel = await services.registry.getChannel();
+    return (channel?.agentStreamerInfo ?? "").trim();
+  }
+
+  // Ресурс регистрируется всегда: обработчик чтения и сама возможность должны
+  // существовать. Пустое поле скрывает его из перечня и даёт отказ при чтении.
+  server.registerResource(
+    STREAMER_RESOURCE_NAME,
+    STREAMER_RESOURCE_URI,
+    {
+      title: STREAMER_RESOURCE_TITLE,
+      description: STREAMER_RESOURCE_DESCRIPTION,
+      mimeType: "text/plain",
+    },
+    async (uri) => {
+      const text = await agentInfo();
+      if (text === "") throw new ResourceNotFoundError(uri.href);
+      return { contents: [{ uri: uri.href, mimeType: "text/plain", text }] };
+    },
+  );
+
+  // Штатный перечень строится по зарегистрированным ресурсам и не умеет
+  // скрывать ресурс, пока поле пустое. Поэтому перечень считается здесь же:
+  // он читает ту же запись канала, что и само чтение.
+  server.server.setRequestHandler("resources/list", async () => {
+    const text = await agentInfo();
+    if (text === "") return { resources: [] };
+    return {
+      resources: [
+        {
+          uri: STREAMER_RESOURCE_URI,
+          name: STREAMER_RESOURCE_NAME,
+          title: STREAMER_RESOURCE_TITLE,
+          description: STREAMER_RESOURCE_DESCRIPTION,
+          mimeType: "text/plain",
+        },
+      ],
+    };
+  });
 
   server.registerTool(
     "search_knowledge",

@@ -21,6 +21,7 @@ const channel: ChannelSummary = {
   login: "5opka",
   displayName: "5opka",
   streamerInfo: "Постоянные собеседники: Соня (sonasheka), Buster.",
+  agentStreamerInfo: "5opka — стример из Ростова-на-Дону. Канал про общение.",
 };
 
 function render(tokenState: TokenState, withChannel: ChannelSummary | undefined): string {
@@ -43,14 +44,15 @@ describe("раздел управления и токен владельца", (
     for (const state of ["none", "checking", "invalid", "unreachable"] as const) {
       const html = withChannel(state);
       expect(html).toContain("Токен владельца");
-      expect(html).not.toContain("О стримере");
+      expect(html).not.toContain("Сведения о стримере для разбора");
+      expect(html).not.toContain("Общая информация о стримере для ассистента");
       expect(html).not.toContain("Добавить запись вручную");
     }
   });
 
   test("с верным токеном поля на месте", () => {
     const html = withChannel("valid");
-    expect(html).toContain("О стримере");
+    expect(html).toContain("Сведения о стримере для разбора");
     expect(html).toContain("Добавить запись вручную");
     expect(html).toContain("Логин канала на Twitch");
   });
@@ -66,7 +68,27 @@ describe("раздел управления и токен владельца", (
   test("без подключённого канала поле о стримере не показывается", () => {
     // Сведения живут в записи канала: без канала их негде хранить, и
     // заполненное поле пропало бы при перезагрузке.
-    expect(render("valid", undefined)).not.toContain("О стримере");
+    const html = render("valid", undefined);
+    expect(html).not.toContain("Сведения о стримере для разбора");
+    expect(html).not.toContain("Общая информация о стримере для ассистента");
+  });
+
+  test("видны оба поля — для разбора и для ассистента", () => {
+    const html = withChannel("valid");
+    expect(html).toContain("Сведения о стримере для разбора");
+    expect(html).toContain("Общая информация о стримере для ассистента");
+    // У каждого поля сказано, кому идёт текст: иначе владелец правит не то.
+    expect(html).toContain("уходят в инструкцию");
+    expect(html).toContain("эти сведения не получает");
+    expect(html).toContain("получает как ресурс");
+    expect(html).toContain("видят все");
+    expect(html).toContain("На разбор документов они не влияют");
+  });
+
+  test("при пустом поле для ассистента пояснение остаётся", () => {
+    const html = render("valid", { ...channel, agentStreamerInfo: undefined });
+    expect(html).toContain("Общая информация о стримере для ассистента");
+    expect(html).toContain("видят все");
   });
 });
 

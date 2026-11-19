@@ -31,6 +31,12 @@ export interface ChannelRecord {
    * инструкцию. Пустая строка и отсутствие поля равнозначны «не заполнено».
    */
   streamerInfo?: string;
+  /**
+   * Общая информация о стримере для ассистента, подключённого по MCP.
+   * Отдельное поле: сведения для разбора (`streamerInfo`) остаются прежними,
+   * и правка одного не меняет другое. Пустая строка — «не задано».
+   */
+  agentStreamerInfo?: string;
 }
 
 export interface StreamRecord {
@@ -151,6 +157,7 @@ export class Registry {
       ...(raw["lastCheckedAt"] === undefined ? {} : { lastCheckedAt: asNumber(raw["lastCheckedAt"]) }),
       ...(raw["lastCheckError"] === undefined ? {} : { lastCheckError: asString(raw["lastCheckError"]) }),
       ...(raw["streamerInfo"] === undefined ? {} : { streamerInfo: asString(raw["streamerInfo"]) }),
+      ...(raw["agentStreamerInfo"] === undefined ? {} : { agentStreamerInfo: asString(raw["agentStreamerInfo"]) }),
     };
   }
 
@@ -176,6 +183,14 @@ export class Registry {
    */
   async setStreamerInfo(info: string): Promise<void> {
     await this.call(() => this.redis.hset(CHANNEL_KEY, { streamerInfo: info }));
+  }
+
+  /**
+   * Общая информация о стримере для ассистента (ресурс MCP). Пустая строка
+   * сохраняется как осознанное «не задано», как и у сведений для разбора.
+   */
+  async setAgentStreamerInfo(info: string): Promise<void> {
+    await this.call(() => this.redis.hset(CHANNEL_KEY, { agentStreamerInfo: info }));
   }
 
   /** Итог очередного опроса канала: отсутствие новых записей — не ошибка. */
