@@ -6,7 +6,7 @@
 
 ## Summary
 
-Для ассистента, подключённого по MCP, заводится отдельное поле `agentStreamerInfo` в записи канала. Прежнее поле `streamerInfo` остаётся частью инструкции разбора и в ресурс не попадает. Из нового поля собирается один ресурс `streamer://info`: он появляется в `resources/list`, только когда поле непустое; чтение отдаёт сохранённый текст без обёртки и обрезки; при пустом поле ресурса нет и чтение отвечает «не найден». Ресурс публичный, без авторизации; инструменты не меняются.
+Для ассистента, подключённого по MCP, заводится отдельное поле `agentStreamerInfo` в записи канала. Прежнее поле `streamerInfo` остаётся частью инструкции разбора и в ресурс не попадает. Из нового поля собирается один ресурс `streamer://info`: он появляется в `resources/list`, только когда поле непустое; чтение отдаёт сохранённый текст без обёртки и обрезки; при пустом поле ресурса нет и чтение отвечает «не найден». Ресурс публичный, без авторизации; инструменты не меняются. Текст общей информации о 5opka готовится в [streamer-info.md](./streamer-info.md) на основе открытых сведений — он для ассистента, а не для разбора.
 
 Перечень ресурсов зависит от данных, поэтому `resources/list` заменяется на низкоуровневом `McpServer.server`; это документированный способ задать свой обработчик. Альтернативы и опоры — в [research.md](./research.md) §4. Новых зависимостей, внешних ресурсов и расходов нет; программа конвейера не меняется.
 
@@ -59,6 +59,7 @@ specs/010-mcp-streamer-resources/
 │   ├── mcp-resource.md  # ресурс: метаданные, list/read, ошибки
 │   └── agent-streamer-api.md  # PUT /api/agent-streamer
 ├── quickstart.md        # Phase 1: порядок проверки
+├── streamer-info.md     # текст общей информации о 5opka для ассистента
 ├── spec.md
 ├── checklists/
 │   └── requirements.md
@@ -94,9 +95,10 @@ tests/unit/pages-render.test.tsx       # раздел MCP по-прежнему 
 | 2. Поле и API | `Registry`: поле, чтение, запись; `PUT /api/agent-streamer`; контрактные проверки | `speckit-implement`, `upstash:upstash-redis-js` | [Upstash REST](https://upstash.com/docs/redis/features/restapi), [contracts/agent-streamer-api.md](./contracts/agent-streamer-api.md) |
 | 3. Ресурс MCP | `capabilities.resources.listChanged: false`; `registerResource`; перечень на `server.server`; чтение с `ResourceNotFoundError`; проверки Worker'а | `speckit-implement`, `cloudflare:build-mcp`, `workers-best-practices` | [MCP resources](https://modelcontextprotocol.io/specification/2026-07-28/server/resources), [research.md](./research.md) §3–5, [contracts/mcp-resource.md](./contracts/mcp-resource.md) |
 | 4. Страница | Второе поле в управлении; текущий текст в разделе MCP; состояния ожидания/ошибки; проверки разметки | `speckit-implement`, `shadcn` | [quickstart.md](./quickstart.md), существующие `HomePage`/`ManagePage` |
-| 5. Проверки | `npm run typecheck`, `npx vitest run --project logic`, `npx vitest run --project workers`, `npm run build` | `speckit-implement` | [Vitest](https://v4.vitest.dev/llms.txt) |
-| 6. Ревью и выпуск | Ревью по навыку, PR, слияние | `code-review`, `gh-cli` | — |
-| 7. После выпуска | Живая страница и настоящий MCP-клиент: ресурс в перечне, чтение, пустое поле | `cloudflare` | [quickstart.md](./quickstart.md), «Проверки после выпуска» |
+| 5. Текст о 5opka | Написать текст общей информации для ассистента в `streamer-info.md`; только открытые сведения, без того, что нельзя показывать | `speckit-implement` | [specs/002-document-quality/streamer-info.md](../002-document-quality/streamer-info.md) |
+| 6. Проверки | `npm run typecheck`, `npx vitest run --project logic`, `npx vitest run --project workers`, `npm run build` | `speckit-implement` | [Vitest](https://v4.vitest.dev/llms.txt) |
+| 7. Ревью и выпуск | Ревью по навыку, PR, слияние | `code-review`, `gh-cli` | — |
+| 8. После выпуска | Живая страница и настоящий MCP-клиент: ресурс в перечне, чтение, пустое поле; сохранить текст из `streamer-info.md` в поле | `cloudflare` | [quickstart.md](./quickstart.md), «Проверки после выпуска» |
 
 Слияние в основную ветку само выпускает сервис (`CLAUDE.md`). Программа конвейера не меняется: `npm run build:pipeline` и выкладка в машину не нужны. Этап 7 в список задач не входит — он про выпущенное.
 
@@ -110,3 +112,4 @@ tests/unit/pages-render.test.tsx       # раздел MCP по-прежнему 
 - **Длинный текст.** До 20 000 знаков показываются целиком; вёрстка — обычный текст с сохранением переносов, без обрезки и без карточки.
 - **Независимость полей.** Проверки: правка `streamerInfo` не меняет ресурс, правка `agentStreamerInfo` не меняет хеш инструкции разбора; `setChannel` не затирает новое поле.
 - **Новый путь и токен.** `PUT /api/agent-streamer` повторяет защиту `PUT /api/streamer`; контрактные проверки — без токена, с чужим полем, с пустой строкой, с предельной длиной.
+- **Текст о 5opka.** Только открытые сведения; ничего, что нельзя показывать (поле публично). Текст пишется для ассистента, а не как список исправлений распознавания; выдуманных фактов и прозвищ быть не должно. Сохранение текста в боевое поле — действие после выпуска, в задачи не входит.
