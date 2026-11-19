@@ -90,7 +90,7 @@ description: "Задачи: общая информация о стримере 
 
 - [x] T017 [P] Прогнать `npm run typecheck`, `npx vitest run --project logic`, `npx vitest run --project workers`, `npm run build`
 - [x] T018 Пройти [quickstart.md](./quickstart.md) без частей, требующих развёрнутого сервиса: автоматические проверки и сборка
-- [ ] T019 Ревью по навыку `code-review`, затем коммит и Pull Request в `main` (`gh-cli`). Программа конвейера не меняется: `npm run build:pipeline` и выкладка в машину не нужны
+- [x] T019 Ревью по навыку `code-review`, затем коммит и Pull Request в `main` (`gh-cli`). Программа конвейера не меняется: `npm run build:pipeline` и выкладка в машину не нужны. Ревью нашло шесть замечаний — все разобраны; PR #100
 
 ---
 
