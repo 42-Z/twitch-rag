@@ -20,7 +20,7 @@ import {
   handleGetDocument,
   handleReparseStream,
 } from "./routes/streams.ts";
-import { handleSetChannel, handleSetStreamer } from "./routes/channel.ts";
+import { handleSetAgentStreamer, handleSetChannel, handleSetStreamer } from "./routes/channel.ts";
 import { requireAdminToken } from "./routes/owner.ts";
 import { runScheduledCheck } from "./schedule.ts";
 import { TEMPORARY_PREFIXES } from "./temporary.ts";
@@ -116,6 +116,12 @@ const ROUTES: Route[] = [
     method: "PUT",
     pattern: "/api/streamer",
     handler: (request, env) => handleSetStreamer(request, env, createServices(env)),
+  },
+
+  {
+    method: "PUT",
+    pattern: "/api/agent-streamer",
+    handler: (request, env) => handleSetAgentStreamer(request, env, createServices(env)),
   },
 
   {

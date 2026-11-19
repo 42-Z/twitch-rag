@@ -20,6 +20,7 @@ const realFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  vi.restoreAllMocks();
 });
 
 /** Указатель отдаёт одну запись, а пакетное чтение отвечает заданным исходом. */
@@ -33,10 +34,13 @@ function stubRegistry(pipeline: unknown): void {
 }
 
 describe("чтение списка из реестра", () => {
-  test("ошибка отдельной команды не превращается в пропажу записи", () => {
+  test("ошибка отдельной команды не превращается в пропажу записи", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     stubRegistry([{ error: "WRONGTYPE Operation against a key holding the wrong kind of value" }]);
 
-    return expect(listStreams()).rejects.toThrow(/WRONGTYPE/);
+    // Наружу — понятный текст; подробность внешнего сервиса остаётся в журнале.
+    await expect(listStreams()).rejects.toThrow("Реестр сейчас недоступен. Попробуйте обновить страницу.");
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("WRONGTYPE"));
   });
 
   test("годный ответ читается как прежде", async () => {

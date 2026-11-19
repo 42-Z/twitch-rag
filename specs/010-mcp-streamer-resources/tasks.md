@@ -24,7 +24,7 @@ description: "Задачи: общая информация о стримере 
 
 **Purpose**: убедиться, что исходное состояние зелёное
 
-- [ ] T001 Прогнать `npx vitest run --project logic`, `npx vitest run --project workers`, `npm run typecheck`, `npm run build`; убедиться, что всё проходит до правок
+- [x] T001 Прогнать `npx vitest run --project logic`, `npx vitest run --project workers`, `npm run typecheck`, `npm run build`; убедиться, что всё проходит до правок
 
 ---
 
@@ -34,8 +34,8 @@ description: "Задачи: общая информация о стримере 
 
 **⚠️ CRITICAL**: без этой фазы истории не начинать
 
-- [ ] T002 [P] Написать падающую проверку в `tests/unit/registry-agent-info.test.ts`: `setAgentStreamerInfo` пишет только `agentStreamerInfo`; `getChannel` возвращает его; `setChannel` не затирает ни новое поле, ни `streamerInfo`; пустая строка сохраняется как пустая. Подменённый `fetch` — по образцу `tests/unit/registry-batch.test.ts`
-- [ ] T003 В `src/shared/registry.ts`: добавить `agentStreamerInfo?: string` в `ChannelRecord`; читать `raw["agentStreamerInfo"]` в `getChannel`; добавить `setAgentStreamerInfo(info: string)` — `HSET` только этого поля; `setChannel` оставить поимённым и новое поле не трогать. Комментарии — по образцу `streamerInfo`
+- [x] T002 [P] Написать падающую проверку в `tests/unit/registry-agent-info.test.ts`: `setAgentStreamerInfo` пишет только `agentStreamerInfo`; `getChannel` возвращает его; `setChannel` не затирает ни новое поле, ни `streamerInfo`; пустая строка сохраняется как пустая. Подменённый `fetch` — по образцу `tests/unit/registry-batch.test.ts`
+- [x] T003 В `src/shared/registry.ts`: добавить `agentStreamerInfo?: string` в `ChannelRecord`; читать `raw["agentStreamerInfo"]` в `getChannel`; добавить `setAgentStreamerInfo(info: string)` — `HSET` только этого поля; `setChannel` оставить поимённым и новое поле не трогать. Комментарии — по образцу `streamerInfo`
 
 **Checkpoint**: поле хранится, читается и не затирается подключением канала
 
@@ -49,12 +49,12 @@ description: "Задачи: общая информация о стримере 
 
 ### Tests for User Story 1
 
-- [ ] T004 [P] [US1] Написать падающие проверки в `tests/worker/worker.test.ts` (клиент `@modelcontextprotocol/client` через `InMemoryTransport`, `FakeRegistry`): заполненное `agentStreamerInfo` — `resources/list` содержит ровно один ресурс `streamer://info` с name/title/description/mimeType; `readResource` отдаёт текст без краевых пробелов и без обёртки; пустое поле — список пуст, чтение отвечает ошибкой; `streamerInfo` заполнено, `agentStreamerInfo` пусто — ресурса нет; смена текста между чтениями видна; на `resources/list` и `resources/read` — по одному обращению к реестру. Использовать `seededRegistry` и `registry.hash("channel").set(...)`
+- [x] T004 [P] [US1] Написать падающие проверки в `tests/worker/worker.test.ts` (клиент `@modelcontextprotocol/client` через `InMemoryTransport`, `FakeRegistry`): заполненное `agentStreamerInfo` — `resources/list` содержит ровно один ресурс `streamer://info` с name/title/description/mimeType; `readResource` отдаёт текст без краевых пробелов и без обёртки; пустое поле — список пуст, чтение отвечает ошибкой; `streamerInfo` заполнено, `agentStreamerInfo` пусто — ресурса нет; смена текста между чтениями видна; на `resources/list` и `resources/read` — по одному обращению к реестру. Использовать `seededRegistry` и `registry.hash("channel").set(...)`
 
 ### Implementation for User Story 1
 
-- [ ] T005 [US1] В `src/worker/mcp.ts`: создать `McpServer` с `capabilities: { resources: { listChanged: false } }`; зарегистрировать `streamer://info` (name `streamer_info`, title «Общая информация о стримере», description «Кто такой стример и о чём канал: общие сведения для ассистента», `mimeType: "text/plain"`); в чтении брать `agentStreamerInfo` из `getChannel`, `trim`, при пустом — `ResourceNotFoundError(uri.href)`, иначе `{ contents: [{ uri, mimeType: "text/plain", text }] }`. Заменить `server.server.setRequestHandler("resources/list", …)`: читает канал, при пустом поле — `{ resources: [] }`, иначе один ресурс с теми же метаданными. Импортировать `ResourceNotFoundError`; инструменты и их ответы не менять
-- [ ] T006 [US1] Прогнать `npx vitest run --project workers`; убедиться, что новые проверки проходят, прежняя проверка `list_streams` и остальные не изменились. При падении исправлять реализацию, а не ожидания
+- [x] T005 [US1] В `src/worker/mcp.ts`: создать `McpServer` с `capabilities: { resources: { listChanged: false } }`; зарегистрировать `streamer://info` (name `streamer_info`, title «Общая информация о стримере», description «Кто такой стример и о чём канал: общие сведения для ассистента», `mimeType: "text/plain"`); в чтении брать `agentStreamerInfo` из `getChannel`, `trim`, при пустом — `ResourceNotFoundError(uri.href)`, иначе `{ contents: [{ uri, mimeType: "text/plain", text }] }`. Заменить `server.server.setRequestHandler("resources/list", …)`: читает канал, при пустом поле — `{ resources: [] }`, иначе один ресурс с теми же метаданными. Импортировать `ResourceNotFoundError`; инструменты и их ответы не менять
+- [x] T006 [US1] Прогнать `npx vitest run --project workers`; убедиться, что новые проверки проходят, прежняя проверка `list_streams` и остальные не изменились. При падении исправлять реализацию, а не ожидания
 
 **Checkpoint**: US1 работает и проверена независимо; инструменты не тронуты
 
@@ -68,19 +68,19 @@ description: "Задачи: общая информация о стримере 
 
 ### Tests for User Story 2
 
-- [ ] T007 [P] [US2] Написать падающий контракт `tests/contract/agent-streamer.test.ts` по образцу `tests/contract/streamer.test.ts`: `handleSetAgentStreamer` сохраняет текст дословно; пустая строка сохраняется; текст до 20 000 знаков принимается; без токена — `unauthorized`; тело без `info` — `invalid_input`; вызов не трогает `setStreamerInfo`
-- [ ] T008 [P] [US2] Дополнить `tests/unit/manage-page.test.tsx`: у канала с заполненным `agentStreamerInfo` видны два поля с разными названиями и пояснениями; при пустом поле новое поле присутствует и объясняет, куда идёт текст; прежнее поле названо как поле для разбора
-- [ ] T009 [P] [US2] Создать `tests/unit/mcp-page.test.tsx`: с заполненным `channel.agentStreamerInfo` виден текст; с пустым — сообщение «ресурса нет» и указание, где заполнить; с ошибкой чтения — `Alert`; при загрузке — `Skeleton`
+- [x] T007 [P] [US2] Написать падающий контракт `tests/contract/agent-streamer.test.ts` по образцу `tests/contract/streamer.test.ts`: `handleSetAgentStreamer` сохраняет текст дословно; пустая строка сохраняется; текст до 20 000 знаков принимается; без токена — `unauthorized`; тело без `info` — `invalid_input`; вызов не трогает `setStreamerInfo`
+- [x] T008 [P] [US2] Дополнить `tests/unit/manage-page.test.tsx`: у канала с заполненным `agentStreamerInfo` видны два поля с разными названиями и пояснениями; при пустом поле новое поле присутствует и объясняет, куда идёт текст; прежнее поле названо как поле для разбора
+- [x] T009 [P] [US2] Создать `tests/unit/mcp-page.test.tsx`: с заполненным `channel.agentStreamerInfo` виден текст; с пустым — сообщение «ресурса нет» и указание, где заполнить; с ошибкой чтения — `Alert`; при загрузке — `Skeleton`
 
 ### Implementation for User Story 2
 
-- [ ] T010 [US2] В `src/worker/routes/channel.ts` добавить `handleSetAgentStreamer`: тот же `{ info }`, предел `MAX_STREAMER_INFO_CHARS` (20 000), `requireAdminToken`, `parseJson`, `services.registry.setAgentStreamerInfo`; в `src/worker/index.ts` добавить маршрут `PUT /api/agent-streamer`
-- [ ] T011 [P] [US2] В `src/ui/lib/registry.ts`: добавить `agentStreamerInfo?: string` в `ChannelSummary` и читать `map.get("agentStreamerInfo")` в `getChannel`
-- [ ] T012 [US2] В `src/ui/App.tsx`: различать «канал прочитан», «канала нет» и «ошибка чтения»; передать `channel`, `loaded`, `error` в `McpPage`; `onChanged` по-прежнему обновляет канал
-- [ ] T013 [US2] В `src/ui/pages/ManagePage.tsx`: второе поле «Общая информация о стримере для ассистента» с пояснением, что текст видят все и на разбор он не влияет; прежнее поле — «Сведения о стримере для разбора» с пояснением, что ассистент его не получает; сохранять через `/api/agent-streamer`; добавить `"agent"` в `busy`, `message`, `outcome`; показывать сохранённое значение из `channel.agentStreamerInfo`
-- [ ] T014 [US2] В `src/ui/pages/McpPage.tsx`: принять `channel`, `loaded`, `error`; показать название ресурса и текущий текст (`whitespace-pre-wrap`); при пустом поле — сообщение, что ресурса нет, и ссылку на `/manage`; при загрузке — `Skeleton`; при ошибке — `Alert`
-- [ ] T015 [US2] Прогнать новые проверки; убедиться, что сохранение поля и чтение ресурса дают один и тот же текст, а прежние проверки инструментов и разбора остаются зелёными
-- [ ] T016 [P] [US2] Написать текст общей информации о 5opka в `specs/010-mcp-streamer-resources/streamer-info.md`: кто он, о чём канал, постоянные собеседники и свои словечки; только открытые сведения, без того, что нельзя показывать; текст для ассистента, а не список исправлений распознавания. Опереться на `specs/002-document-quality/streamer-info.md` и открытые источники. Сохранение текста в поле — после выпуска (действие над боевыми данными, в задачи не входит)
+- [x] T010 [US2] В `src/worker/routes/channel.ts` добавить `handleSetAgentStreamer`: тот же `{ info }`, предел `MAX_STREAMER_INFO_CHARS` (20 000), `requireAdminToken`, `parseJson`, `services.registry.setAgentStreamerInfo`; в `src/worker/index.ts` добавить маршрут `PUT /api/agent-streamer`
+- [x] T011 [P] [US2] В `src/ui/lib/registry.ts`: добавить `agentStreamerInfo?: string` в `ChannelSummary` и читать `map.get("agentStreamerInfo")` в `getChannel`
+- [x] T012 [US2] В `src/ui/App.tsx`: различать «канал прочитан», «канала нет» и «ошибка чтения»; передать `channel`, `loaded`, `error` в `McpPage`; `onChanged` по-прежнему обновляет канал
+- [x] T013 [US2] В `src/ui/pages/ManagePage.tsx`: второе поле «Общая информация о стримере для ассистента» с пояснением, что текст видят все и на разбор он не влияет; прежнее поле — «Сведения о стримере для разбора» с пояснением, что ассистент его не получает; сохранять через `/api/agent-streamer`; добавить `"agent"` в `busy`, `message`, `outcome`; показывать сохранённое значение из `channel.agentStreamerInfo`
+- [x] T014 [US2] В `src/ui/pages/McpPage.tsx`: принять `channel`, `loaded`, `error`; показать название ресурса и текущий текст (`whitespace-pre-wrap`); при пустом поле — сообщение, что ресурса нет, и ссылку на `/manage`; при загрузке — `Skeleton`; при ошибке — `Alert`
+- [x] T015 [US2] Прогнать новые проверки; убедиться, что сохранение поля и чтение ресурса дают один и тот же текст, а прежние проверки инструментов и разбора остаются зелёными
+- [x] T016 [P] [US2] Написать текст общей информации о 5opka в `specs/010-mcp-streamer-resources/streamer-info.md`: кто он, о чём канал, постоянные собеседники и свои словечки; только открытые сведения, без того, что нельзя показывать; текст для ассистента, а не список исправлений распознавания. Опереться на `specs/002-document-quality/streamer-info.md` и открытые источники. Сохранение текста в поле — после выпуска (действие над боевыми данными, в задачи не входит)
 
 **Checkpoint**: обе истории работают независимо; сохранил текст — ассистент его получает
 
@@ -88,8 +88,8 @@ description: "Задачи: общая информация о стримере 
 
 ## Phase 5: Polish
 
-- [ ] T017 [P] Прогнать `npm run typecheck`, `npx vitest run --project logic`, `npx vitest run --project workers`, `npm run build`
-- [ ] T018 Пройти [quickstart.md](./quickstart.md) без частей, требующих развёрнутого сервиса: автоматические проверки и сборка
+- [x] T017 [P] Прогнать `npm run typecheck`, `npx vitest run --project logic`, `npx vitest run --project workers`, `npm run build`
+- [x] T018 Пройти [quickstart.md](./quickstart.md) без частей, требующих развёрнутого сервиса: автоматические проверки и сборка
 - [ ] T019 Ревью по навыку `code-review`, затем коммит и Pull Request в `main` (`gh-cli`). Программа конвейера не меняется: `npm run build:pipeline` и выкладка в машину не нужны
 
 ---
